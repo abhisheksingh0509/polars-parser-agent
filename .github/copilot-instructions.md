@@ -8,44 +8,43 @@ rejects, and lineage.
 Parquet, or calling pyiceberg, stop — that already exists and you are in the
 wrong layer.
 
-## Environment (Windows)
+## Environment
 
-Python **3.12** specifically — 3.13+ is ahead of stable pyiceberg/pyarrow wheels.
+Everything runs through `uv`. One setup command, then `uv run` in front of every
+command — never emit a `.venv/bin/…` path, and never activate anything.
 
-```powershell
-uv venv --python 3.12
-uv pip install -e ".[dev]"
-.venv\Scripts\python.exe -m pytest
+```bash
+uv sync --extra dev
+uv run pytest
 ```
 
-Run the CLI as `.venv\Scripts\ffe.exe` (or activate with
-`.venv\Scripts\Activate.ps1` first). Do not use `python setup.py`, `pip install`
-into the global interpreter, or conda.
+`uv.lock` is committed, so the resolution is fixed.
 
-If `uv` is unavailable:
+`uv sync` reads `requires-python` (`>=3.12,<3.13`) and installs Python **3.12**
+itself — 3.13+ is ahead of stable pyiceberg/pyarrow wheels. Do not pick an
+interpreter by hand, and do not use `python setup.py`, `pip install` into the
+global interpreter, or conda.
 
-```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\python.exe -m pip install -e ".[dev]"
-```
+`uv` is not optional here — it supplies the 3.12 interpreter as well as the
+environment, and there is no system 3.12 to fall back to.
 
 ## Onboarding a feed
 
 Someone gives you a sample file (100 rows is enough) and asks to onboard a feed:
 
-```powershell
-.venv\Scripts\ffe.exe profile <sample>                 # 1. measure. read structure_hint.
-.venv\Scripts\ffe.exe lint <feed.yaml>                 # 2. after writing a spec, check it
-.venv\Scripts\ffe.exe dry-run <feed.yaml> <sample>     # 3. parse it. writes nothing.
-.venv\Scripts\ffe.exe run <feed.yaml>                  # 4. ONLY after a human approves
+```bash
+uv run ffe profile <sample>                 # 1. measure. read structure_hint.
+uv run ffe lint <feed.yaml>                 # 2. after writing a spec, check it
+uv run ffe dry-run <feed.yaml> <sample>     # 3. parse it. writes nothing.
+uv run ffe run <feed.yaml>                  # 4. ONLY after a human approves
 ```
 
 **Always try config-only first.** `profile` returns a `structure_hint` naming a
 strategy. Most feeds need one YAML file and no Python at all. Only scaffold a
 plugin when `dry-run` cannot be made to pass:
 
-```powershell
-.venv\Scripts\ffe.exe new-parser <ref>                 # writes plugin + test + feed spec
+```bash
+uv run ffe new-parser <ref>                 # writes plugin + test + feed spec
 ```
 
 Show the human the `head` from `dry-run` and wait. **Do not run `ffe run`
@@ -84,7 +83,8 @@ do not guess:
   retrying** and tell the human. No spec change will help.
 - exit 1 — a bug in `ffe`, not in the spec. Report it, don't work around it.
 
-In PowerShell the exit code is `$LASTEXITCODE`.
+`uv run` passes the CLI's exit code through unchanged, so `$?` is the real
+verdict.
 
 ## Choosing a parser kind
 
@@ -98,7 +98,8 @@ Read `structure_hint.strategy` from `profile`:
 | `unknown` | scaffold a plugin | `plugins/acme_positions.py` |
 
 Copy the closest existing feed spec rather than writing one from scratch.
-`ffe schema` prints the full accepted shape, generated from the pydantic models.
+`uv run ffe schema` prints the full accepted shape, generated from the pydantic
+models.
 
 Fixed-width is **not** a built-in strategy — it needs a plugin.
 `plugins/acme_positions.py` is the reference implementation.
@@ -127,7 +128,7 @@ class MyFeed(ParserPlugin):
 Wrap, don't rewrite. Existing parsers usually already produce rows; they just
 also do their own file and storage handling. Strip that out:
 
-1. `ffe new-parser <ref>` to get the correctly shaped stub.
+1. `uv run ffe new-parser <ref>` to get the correctly shaped stub.
 2. Move the row-producing logic into `parse()`. Delete everything that opens
    files, walks directories, unzips, connects to a database, or writes output —
    the framework does all of it.
@@ -153,11 +154,15 @@ Default executor is `thread`. Do not switch to `process` "for speed" — it was
 measured slower on every benchmark, because spawning workers that each re-import
 Polars costs more than the parsing saves until a job exceeds roughly 4M rows.
 
-## Windows specifics that have already bitten
+## Invariants that have already bitten once
+
+This runs on macOS, but keep these anyway: each one is pinned by a test, and each
+one is a real constraint if the project is ever rebuilt elsewhere (see
+`docs/BUILD-PLAN.md` Part 5).
 
 - **Paths into pyiceberg / SQLAlchemy** must go through `Path.as_posix()` or
-  `Path.as_uri()`. A plain `str()` gives backslashes and a bare drive letter,
-  which neither will parse. See `src/ffe/io/sink.py`.
+  `Path.as_uri()`. A plain `str()` on Windows gives backslashes and a bare drive
+  letter, which neither will parse. See `src/ffe/io/sink.py`.
 - **Line endings**: `.gitattributes` marks `tests/fixtures/**` as binary so git
   never rewrites them. Do not remove that. The framer normalises CRLF and strips
   a BOM; `test_crlf_and_bom_parse_identically_to_lf` pins it.
@@ -185,7 +190,10 @@ make a job pass.
 Every feed's sample is committed to `tests/fixtures/` and pinned by a test. This
 is deliberate: each feed onboarded makes the suite stronger.
 
-```powershell
-.venv\Scripts\python.exe -m pytest -q          # must be green before proposing anything
-.venv\Scripts\python.exe scripts\smoke.py      # end-to-end: zip -> Iceberg -> read back
+```bash
+uv run pytest -q                    # must be green before proposing anything
+uv run python scripts/smoke.py      # end-to-end: zip -> Iceberg -> read back
 ```
+
+`pytest` reports 30 passed and 1 skipped; the skip is the notebook test, which
+needs the extra dependencies (`uv run --all-extras pytest -q` gives 32 passed).
