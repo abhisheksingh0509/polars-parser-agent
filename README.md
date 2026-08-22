@@ -8,12 +8,15 @@ Onboarding a new feed is **one YAML file**, plus a parser class only when the
 built-ins can't express the format.
 
 **New here? Start with [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md)** — plain
-language, step by step. Or run [`notebooks/explore.ipynb`](notebooks/explore.ipynb) to see
-the whole path from a messy file to a queryable table.
+language, step by step. It ends with a worked example of
+[onboarding a file of your own](docs/GETTING-STARTED.md#testing-your-own-file),
+from first look to a test that pins it. Or run
+[`notebooks/explore.ipynb`](notebooks/explore.ipynb) to watch the whole path from a
+messy file to a queryable table.
 
 | Doc | For |
 |---|---|
-| [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) | using it, in plain language |
+| [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) | using it, in plain language — and testing your own file |
 | [`notebooks/explore.ipynb`](notebooks/explore.ipynb) | seeing it work, interactively |
 | [`docs/DESIGN.md`](docs/DESIGN.md) | why it's built this way, plus measurements |
 | [`docs/BUILD-PLAN.md`](docs/BUILD-PLAN.md) | extending it, or migrating existing parsers |
