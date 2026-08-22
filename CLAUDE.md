@@ -9,13 +9,12 @@ It is kept there rather than here so that GitHub Copilot picks it up
 automatically on the Windows machines this project is also developed on. There is
 no separate Claude-specific guidance; nothing in that file is Copilot-specific.
 
-## macOS / Linux equivalents
+## Commands
 
-That file spells commands out for PowerShell. Locally:
+Everything runs through `uv` — `uv sync --extra dev` once, then `uv run` in front
+of every command (`uv run ffe …`, `uv run pytest`, `uv run python scripts/smoke.py`).
+That is identical here and on Windows, so there is nothing to translate and no
+`.venv/bin/…` or `.venv\Scripts\…` path to construct.
 
-| Windows | macOS / Linux |
-|---|---|
-| `.venv\Scripts\ffe.exe` | `.venv/bin/ffe` |
-| `.venv\Scripts\python.exe` | `.venv/bin/python` |
-| `.venv\Scripts\Activate.ps1` | `source .venv/bin/activate` |
-| `$LASTEXITCODE` | `$?` |
+The one platform difference: the exit code, which the instructions call
+`$LASTEXITCODE`, is `$?` in zsh.

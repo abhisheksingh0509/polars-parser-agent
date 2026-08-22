@@ -8,21 +8,24 @@ rejects, and lineage.
 Parquet, or calling pyiceberg, stop — that already exists and you are in the
 wrong layer.
 
-## Environment (Windows)
+## Environment
 
-Python **3.12** specifically — 3.13+ is ahead of stable pyiceberg/pyarrow wheels.
+Everything runs through `uv`. One setup command, then `uv run` in front of every
+command — identical on Windows, macOS and Linux, so never emit a
+`.venv\Scripts\…` or `.venv/bin/…` path.
 
-```powershell
-uv venv --python 3.12
-uv pip install -e ".[dev]"
-.venv\Scripts\python.exe -m pytest
+```bash
+uv sync --extra dev
+uv run pytest
 ```
 
-Run the CLI as `.venv\Scripts\ffe.exe` (or activate with
-`.venv\Scripts\Activate.ps1` first). Do not use `python setup.py`, `pip install`
-into the global interpreter, or conda.
+`uv sync` reads `requires-python` (`>=3.12,<3.13`) and installs Python **3.12**
+itself — 3.13+ is ahead of stable pyiceberg/pyarrow wheels. Do not pick an
+interpreter by hand, and do not use `python setup.py`, `pip install` into the
+global interpreter, or conda.
 
-If `uv` is unavailable:
+If `uv` is genuinely unavailable, fall back to a venv and drop the `uv run`
+prefix from everything below:
 
 ```powershell
 py -3.12 -m venv .venv
@@ -33,19 +36,19 @@ py -3.12 -m venv .venv
 
 Someone gives you a sample file (100 rows is enough) and asks to onboard a feed:
 
-```powershell
-.venv\Scripts\ffe.exe profile <sample>                 # 1. measure. read structure_hint.
-.venv\Scripts\ffe.exe lint <feed.yaml>                 # 2. after writing a spec, check it
-.venv\Scripts\ffe.exe dry-run <feed.yaml> <sample>     # 3. parse it. writes nothing.
-.venv\Scripts\ffe.exe run <feed.yaml>                  # 4. ONLY after a human approves
+```bash
+uv run ffe profile <sample>                 # 1. measure. read structure_hint.
+uv run ffe lint <feed.yaml>                 # 2. after writing a spec, check it
+uv run ffe dry-run <feed.yaml> <sample>     # 3. parse it. writes nothing.
+uv run ffe run <feed.yaml>                  # 4. ONLY after a human approves
 ```
 
 **Always try config-only first.** `profile` returns a `structure_hint` naming a
 strategy. Most feeds need one YAML file and no Python at all. Only scaffold a
 plugin when `dry-run` cannot be made to pass:
 
-```powershell
-.venv\Scripts\ffe.exe new-parser <ref>                 # writes plugin + test + feed spec
+```bash
+uv run ffe new-parser <ref>                 # writes plugin + test + feed spec
 ```
 
 Show the human the `head` from `dry-run` and wait. **Do not run `ffe run`
@@ -84,7 +87,8 @@ do not guess:
   retrying** and tell the human. No spec change will help.
 - exit 1 — a bug in `ffe`, not in the spec. Report it, don't work around it.
 
-In PowerShell the exit code is `$LASTEXITCODE`.
+The exit code is `$LASTEXITCODE` in PowerShell, `$?` in bash/zsh. `uv run`
+passes the CLI's exit code through unchanged.
 
 ## Choosing a parser kind
 
@@ -98,7 +102,8 @@ Read `structure_hint.strategy` from `profile`:
 | `unknown` | scaffold a plugin | `plugins/acme_positions.py` |
 
 Copy the closest existing feed spec rather than writing one from scratch.
-`ffe schema` prints the full accepted shape, generated from the pydantic models.
+`uv run ffe schema` prints the full accepted shape, generated from the pydantic
+models.
 
 Fixed-width is **not** a built-in strategy — it needs a plugin.
 `plugins/acme_positions.py` is the reference implementation.
@@ -127,7 +132,7 @@ class MyFeed(ParserPlugin):
 Wrap, don't rewrite. Existing parsers usually already produce rows; they just
 also do their own file and storage handling. Strip that out:
 
-1. `ffe new-parser <ref>` to get the correctly shaped stub.
+1. `uv run ffe new-parser <ref>` to get the correctly shaped stub.
 2. Move the row-producing logic into `parse()`. Delete everything that opens
    files, walks directories, unzips, connects to a database, or writes output —
    the framework does all of it.
@@ -185,7 +190,10 @@ make a job pass.
 Every feed's sample is committed to `tests/fixtures/` and pinned by a test. This
 is deliberate: each feed onboarded makes the suite stronger.
 
-```powershell
-.venv\Scripts\python.exe -m pytest -q          # must be green before proposing anything
-.venv\Scripts\python.exe scripts\smoke.py      # end-to-end: zip -> Iceberg -> read back
+```bash
+uv run pytest -q                    # must be green before proposing anything
+uv run python scripts/smoke.py      # end-to-end: zip -> Iceberg -> read back
 ```
+
+`pytest` reports 30 passed and 1 skipped; the skip is the notebook test, which
+needs the extra dependencies (`uv run --all-extras pytest -q` gives 32 passed).

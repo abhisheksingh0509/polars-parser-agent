@@ -39,30 +39,29 @@ You get: parallel reading, bad-row handling, and full traceability, free.
 
 ## Step 1 — Install it
 
-You need Python **3.12** exactly. Newer versions don't have working versions of
-the storage libraries yet.
+You need [uv](https://docs.astral.sh/uv/). One command, same on Windows, Mac and
+Linux:
 
-**Windows (PowerShell):**
-```powershell
-uv venv --python 3.12
-uv pip install -e ".[dev]"
-```
-
-**Mac / Linux:**
 ```bash
-uv venv --python 3.12 && uv pip install -e ".[dev]"
+uv sync --extra dev
 ```
+
+That creates `.venv`, installs everything, and picks Python **3.12** for you —
+which matters, because newer versions don't have working versions of the storage
+libraries yet. You never activate anything or run `pip`.
 
 Check it worked:
 ```bash
-pytest -q                    # should say 30 passed
-python scripts/smoke.py      # should say smoke test OK
+uv run pytest -q                    # should say 30 passed, 1 skipped
+uv run python scripts/smoke.py      # should say smoke test OK
 ```
 
 Nothing else to install. No database, no Docker, no cloud account.
 
-Below, `ffe` means `.venv/bin/ffe` on Mac/Linux or `.venv\Scripts\ffe.exe` on
-Windows.
+Every command below starts with `uv run` — that's what runs it inside this
+project's environment. If you'd rather not type it, activate the venv once
+(`source .venv/bin/activate`, or `.venv\Scripts\Activate.ps1` on Windows) and
+then drop the `uv run` prefix from everything that follows.
 
 ---
 
@@ -72,7 +71,7 @@ Take a small sample of your file — **100 lines is plenty**. Ask the tool what 
 sees:
 
 ```bash
-ffe profile mysample.txt
+uv run ffe profile mysample.txt
 ```
 
 It measures the file and prints what it found. The part to read is
@@ -135,7 +134,7 @@ policy:
 Check the file is valid before using it:
 
 ```bash
-ffe lint feeds/my-feed.yaml
+uv run ffe lint feeds/my-feed.yaml
 ```
 
 ---
@@ -146,7 +145,7 @@ This is the important step. `dry-run` reads your sample and shows you the result
 **It cannot save anything anywhere**, so try it as many times as you like:
 
 ```bash
-ffe dry-run feeds/my-feed.yaml mysample.txt
+uv run ffe dry-run feeds/my-feed.yaml mysample.txt
 ```
 
 Look at `gates` first:
@@ -188,7 +187,7 @@ One field matters a lot — `blame`:
 Only after `dry-run` looks right:
 
 ```bash
-ffe run feeds/my-feed.yaml
+uv run ffe run feeds/my-feed.yaml
 ```
 
 This one *does* save. It reads all the files in the zip at the same time, then
@@ -197,7 +196,7 @@ saves everything into the table in a single step.
 Want it somewhere else without editing the YAML? Override it:
 
 ```bash
-ffe run feeds/my-feed.yaml --table sandbox.just_testing
+uv run ffe run feeds/my-feed.yaml --table sandbox.just_testing
 ```
 
 The result tells you what happened:
@@ -214,7 +213,7 @@ The result tells you what happened:
 ## Step 6 — Look at what landed
 
 ```bash
-ffe tables
+uv run ffe tables
 ```
 
 ```
@@ -224,9 +223,13 @@ bronze.my_data_rejects         0 rows   0 files  0 snapshot(s)
 
 To actually look at the data, open
 [`notebooks/explore.ipynb`](../notebooks/explore.ipynb). It walks through every
-step above and shows the tables as you go.
+step above and shows the tables as you go:
 
-Or in a few lines of Python:
+```bash
+uv run --all-extras jupyter lab notebooks/explore.ipynb
+```
+
+Or in a few lines of Python (`uv run python`, so the imports resolve):
 
 ```python
 from pathlib import Path
@@ -284,7 +287,7 @@ delimiter.
 For those, you write a small function. Start with:
 
 ```bash
-ffe new-parser my-weird-feed
+uv run ffe new-parser my-weird-feed
 ```
 
 That creates three files for you, already the right shape:
@@ -322,7 +325,7 @@ _ffe/
 To see the history of a feed:
 
 ```bash
-ffe explain feeds/my-feed.yaml
+uv run ffe explain feeds/my-feed.yaml
 ```
 
 To throw everything away and start fresh, delete the `_ffe` folder. Your input
@@ -334,14 +337,14 @@ files and your feed descriptions are untouched.
 
 | Command | What it does | Saves anything? |
 |---|---|---|
-| `ffe profile <file>` | measures a file, suggests a strategy | no |
-| `ffe lint <feed>` | checks your YAML is valid | no |
-| `ffe dry-run <feed> <file>` | reads a sample, shows the table | **no** |
-| `ffe run <feed>` | the real thing | yes |
-| `ffe tables` | what's in the warehouse | no |
-| `ffe explain <feed>` | settings + run history | no |
-| `ffe new-parser <name>` | creates plugin + test + feed files | creates files |
-| `ffe schema` | all the settings a feed file accepts | no |
+| `uv run ffe profile <file>` | measures a file, suggests a strategy | no |
+| `uv run ffe lint <feed>` | checks your YAML is valid | no |
+| `uv run ffe dry-run <feed> <file>` | reads a sample, shows the table | **no** |
+| `uv run ffe run <feed>` | the real thing | yes |
+| `uv run ffe tables` | what's in the warehouse | no |
+| `uv run ffe explain <feed>` | settings + run history | no |
+| `uv run ffe new-parser <name>` | creates plugin + test + feed files | creates files |
+| `uv run ffe schema` | all the settings a feed file accepts | no |
 
 ---
 
@@ -366,7 +369,7 @@ dates in whatever you use downstream.
 
 **"Nothing happened — 0 files found."**
 Your `source.pattern` didn't match anything. Check it with
-`ffe explain feeds/my-feed.yaml` — it shows how many files matched.
+`uv run ffe explain feeds/my-feed.yaml` — it shows how many files matched.
 
 **"It's slower with more workers."**
 Normal. Reading is very fast, so on small jobs starting extra workers costs more

@@ -23,71 +23,71 @@ the whole path from a messy file to a queryable table.
 
 ## Setup
 
-Python **3.12** specifically. 3.13+ is ahead of stable pyiceberg/pyarrow wheels.
-
-### Windows (PowerShell)
-
-```powershell
-uv venv --python 3.12
-uv pip install -e ".[dev]"
-.venv\Scripts\python.exe -m pytest -q
-.venv\Scripts\python.exe scripts\smoke.py
-```
-
-Without `uv`:
-
-```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\python.exe -m pip install -e ".[dev]"
-```
-
-### macOS / Linux
+Everything runs through [uv](https://docs.astral.sh/uv/). One command, identical
+on Windows, macOS and Linux:
 
 ```bash
-uv venv --python 3.12 && uv pip install -e ".[dev]"
-.venv/bin/python -m pytest -q
-.venv/bin/python scripts/smoke.py
+uv sync --extra dev
 ```
 
-### To run the notebook
+That creates `.venv` and picks Python **3.12** from `requires-python` — leave that
+to uv, because 3.13+ is ahead of stable pyiceberg/pyarrow wheels.
 
 ```bash
-uv pip install -e ".[dev,notebook]"
-jupyter lab notebooks/explore.ipynb
+uv run pytest -q                    # expect: 30 passed, 1 skipped
+uv run python scripts/smoke.py      # expect: 19/19, "smoke test OK"
 ```
 
-It's committed without saved outputs, so run it top to bottom — takes about 15
-seconds and cleans up after itself.
-
-Expected: **30 tests passing**, and `smoke test OK` (19 checks). If either fails
-on a fresh clone, fix that before anything else — see
+If either fails on a fresh clone, fix that before anything else — see
 [`docs/BUILD-PLAN.md`](docs/BUILD-PLAN.md) Part 1.
 
 No services needed. It runs on a SQLite Iceberg catalog and a filesystem
 warehouse out of the box.
 
+### To run the notebook
+
+```bash
+uv run --all-extras jupyter lab notebooks/explore.ipynb
+```
+
+It's committed without saved outputs, so run it top to bottom — takes about 15
+seconds and cleans up after itself.
+
+`--all-extras` adds the notebook dependencies, which also un-skip the two tests
+that execute the notebook: `uv run --all-extras pytest -q` gives **32 passed**.
+
+### Without uv
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\python.exe -m pip install -e ".[dev,notebook]"
+```
+
+Then activate the venv and drop the `uv run` prefix from every command below.
+
 ---
 
 ## Using it
 
-Commands below use `ffe`; on Windows that is `.venv\Scripts\ffe.exe`.
+`uv run` puts the CLI on the path — no activation, no platform-specific path to
+the executable.
 
 ```bash
-ffe profile sample.txt                        # measure structure. no model involved.
-ffe lint feeds/my-feed.yaml                   # validate the spec
-ffe dry-run feeds/my-feed.yaml sample.txt     # parse a sample. writes nothing.
-ffe run feeds/my-feed.yaml                    # fan out, gate, one Iceberg commit
-ffe explain feeds/my-feed.yaml                # config + recent job history
-ffe new-parser acme-positions                 # scaffold plugin + test + feed spec
-ffe tables                                    # what's in the warehouse
-ffe schema                                    # the full accepted FeedSpec shape
+uv run ffe profile sample.txt                        # measure structure. no model involved.
+uv run ffe lint feeds/my-feed.yaml                   # validate the spec
+uv run ffe dry-run feeds/my-feed.yaml sample.txt     # parse a sample. writes nothing.
+uv run ffe run feeds/my-feed.yaml                    # fan out, gate, one Iceberg commit
+uv run ffe explain feeds/my-feed.yaml                # config + recent job history
+uv run ffe new-parser acme-positions                 # scaffold plugin + test + feed spec
+uv run ffe tables                                    # what's in the warehouse
+uv run ffe schema                                    # the full accepted FeedSpec shape
 ```
 
 The output table comes from `target.table` in the feed file, and can be overridden
 per run without editing it:
 
 ```bash
-ffe run feeds/my-feed.yaml --table sandbox.my_test --source "C:/drops/*.zip"
+uv run ffe run feeds/my-feed.yaml --table sandbox.my_test --source "C:/drops/*.zip"
 ```
 
 Every command emits JSON. Exit codes are part of the contract: **2** = your spec

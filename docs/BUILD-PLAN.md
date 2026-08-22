@@ -8,8 +8,8 @@ Agent instructions live in
 [`../.github/copilot-instructions.md`](../.github/copilot-instructions.md) and
 Copilot reads them automatically. Nothing below repeats them.
 
-Commands are PowerShell. On macOS/Linux swap `.venv\Scripts\python.exe` for
-`.venv/bin/python`.
+Every command goes through `uv run`, so it is identical on Windows, macOS and
+Linux — no activation, no `.venv\Scripts\…` vs `.venv/bin/…` split.
 
 ---
 
@@ -17,12 +17,15 @@ Commands are PowerShell. On macOS/Linux swap `.venv\Scripts\python.exe` for
 
 Do this first and do not skip the verification. Everything else assumes it.
 
-```powershell
-uv venv --python 3.12
-uv pip install -e ".[dev]"
-.venv\Scripts\python.exe -m pytest -q          # expect: 30 passed
-.venv\Scripts\python.exe scripts\smoke.py      # expect: 19/19, "smoke test OK"
+```bash
+uv sync --extra dev
+uv run pytest -q                    # expect: 30 passed, 1 skipped
+uv run python scripts/smoke.py      # expect: 19/19, "smoke test OK"
 ```
+
+`uv sync` reads `requires-python` and installs Python 3.12 itself, so there is
+nothing to pick by hand. The skip is the notebook test —
+`uv run --all-extras pytest -q` runs it too and gives 32 passed.
 
 **Exit criterion: 30 tests and 19 smoke checks pass on Windows.**
 
@@ -54,23 +57,23 @@ storage and processing layer around each one.
    to `tests/fixtures/`, so it must be shareable.
 
 2. **Profile it before writing anything.**
-   ```powershell
-   .venv\Scripts\ffe.exe profile tests\fixtures\<name>.txt
+   ```bash
+   uv run ffe profile tests/fixtures/<name>.txt
    ```
    Read `structure_hint`. If it says `native`, `sentinel`, or `record_tag`, try
    config-only first — you may not need the existing parser's code at all.
 
 3. **Try a spec.** Copy the closest file in `feeds/`, then:
-   ```powershell
-   .venv\Scripts\ffe.exe dry-run feeds\<name>.yaml tests\fixtures\<name>.txt
+   ```bash
+   uv run ffe dry-run feeds/<name>.yaml tests/fixtures/<name>.txt
    ```
    Iterate on `gates` and the error `candidates` until `gates.passed` is true.
    A surprising share of "we needed a custom parser" feeds are expressible this
    way — the custom code was usually carrying the file handling, not the parsing.
 
 4. **Only if that can't pass, scaffold a plugin.**
-   ```powershell
-   .venv\Scripts\ffe.exe new-parser <ref>
+   ```bash
+   uv run ffe new-parser <ref>
    ```
    Then port the existing parser into `parse()` and **delete** everything that:
    - opens files, walks directories, or unzips
@@ -95,7 +98,7 @@ storage and processing layer around each one.
    `ffe run`.
 
 **Exit criterion per parser:** `gates.passed` true on the sample, its generated
-test asserts real expectations, `pytest` green, and a human has looked at the
+test asserts real expectations, `uv run pytest` green, and a human has looked at the
 DataFrame.
 
 ### Ordering advice
