@@ -89,6 +89,9 @@ per run without editing it:
 uv run ffe run feeds/my-feed.yaml --table sandbox.my_test --source "C:/drops/*.zip"
 ```
 
+Taking an onboarded feed from its sample to the real drop — trial run, gates,
+verification, and the re-run caveat — is [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+
 Every command emits JSON. Exit codes are part of the contract: **2** = your spec
 is wrong (fix and retry), **3** = the file is wrong (stop retrying), **1** = a
 bug in `ffe`.
