@@ -13,3 +13,4 @@ data/
 _notebook_demo/
 _t/
 .ipynb_checkpoints/
+_notebook_wh/*

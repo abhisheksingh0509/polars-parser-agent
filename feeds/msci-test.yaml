@@ -1,0 +1,14 @@
+name: msci-test
+source:
+  pattern: "data/msci_test/*.zip"   # the real drop
+  members: "*"
+parser:
+  kind: plugin
+  ref: msci-test
+  options: {}
+target:
+  table: bronze.msci_test
+  partition_by: [business_date]   # one archive = one day = one partition
+policy:
+  on_reject: quarantine
+  max_reject_ratio: 0.01

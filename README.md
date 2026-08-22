@@ -89,6 +89,9 @@ per run without editing it:
 uv run ffe run feeds/my-feed.yaml --table sandbox.my_test --source "C:/drops/*.zip"
 ```
 
+Taking an onboarded feed from its sample to the real drop — trial run, gates,
+verification, and the re-run caveat — is [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+
 Every command emits JSON. Exit codes are part of the contract: **2** = your spec
 is wrong (fix and retry), **3** = the file is wrong (stop retrying), **1** = a
 bug in `ffe`.
@@ -133,9 +136,21 @@ parser:
     promote_fields: [business_date, file_id]
 target:
   table: bronze.issues
+  partition_by: [business_date]    # identity partitioning, by column name
 policy:
   max_reject_ratio: 0.01           # exceeded -> job fails, nothing commits
+  schema_change: fail              # fail | evolve, when the feed grows a column
 ```
+
+A parser can also take per-run input — a business date, a cutoff — without
+editing the spec:
+
+```bash
+uv run ffe run feeds/my-feed.yaml --option business_date=2026-08-23
+```
+
+It reaches a plugin as `ctx.options`, layered over `parser.options` from the
+YAML.
 
 ---
 

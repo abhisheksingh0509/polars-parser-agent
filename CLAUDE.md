@@ -20,6 +20,10 @@ sequences the workflow in the instructions above rather than restating it.
 `ffe run` is deliberately outside that command's `allowed-tools`: writing to the
 warehouse should cost a permission prompt.
 
+What happens *after* that approval — pointing the spec at the real drop, the
+sandbox trial run, verifying the commit, and the fact that re-running a feed
+double-loads it — is [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+
 ## Platform
 
 This repo runs on **macOS**. Nothing here needs to work on Windows: Windows is

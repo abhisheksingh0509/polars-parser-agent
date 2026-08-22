@@ -171,12 +171,19 @@ class Source(BaseModel):
 
 class Target(BaseModel):
     table: str  # "namespace.table"
+    # Identity partitioning, by column name. Partition on the feed's BUSINESS
+    # date, not on ingest time: a re-load must land in the day it belongs to,
+    # not the day you ran it.
+    partition_by: list[str] = Field(default_factory=list)
 
 
 class Policy(BaseModel):
     on_reject: Literal["quarantine", "fail"] = "quarantine"
     max_reject_ratio: float = 0.01
     workers: int | None = None
+    # "the feed grew a column" -- fail by default, because a schema you did not
+    # ask for is usually a parser bug, not a real change upstream.
+    schema_change: Literal["fail", "evolve"] = "fail"
 
 
 class FeedSpec(BaseModel):

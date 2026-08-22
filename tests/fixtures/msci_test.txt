@@ -1,0 +1,14 @@
+# Source Reference: S&P Dow Jones Indices & MSCI Taxonomy Setup
+# Generated: 2026-08-23
+# Encoding: UTF-8
+
+[SCHEMA_START]
+Sector_ID|Industry_Group_ID|Industry_ID|Sub_Industry_ID::Label_EN::Label_FR
+[DATA_BLOCK]
+10|1010|101010|10101010::Energy (Oil & Gas)::Énergie
+10|1010|101020|10102010::Oil, Gas & Consumable Fuels::Combustibles
+20|2010|201010|20101010::Aerospace & Defense::Aérospatiale
+45|4510|451030|45103020::Systems Software::Logiciels Systèmes
+45|4520|452010|45201020::Communications Equipment::Équipement de Comms
+[SCHEMA_END]
+TRLR_COUNT:5

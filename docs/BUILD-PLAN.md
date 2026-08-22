@@ -117,21 +117,24 @@ are pulling their weight or whether a fourth structure strategy is warranted.
 
 In the order I'd do it. Each is independent; none blocks Part 2.
 
-### 3.1 Partitioned tables
+### 3.1 Partitioned tables — **done**
 
-Currently commits are unpartitioned. Partitioning on `_ingest_date` requires that
-one staged Parquet file maps to exactly one partition.
+`target.partition_by: [business_date]` gives the table an identity `PartitionSpec`
+in `sink.py`. Partition on the feed's business date, not ingest time — a re-load
+must land in the day it belongs to.
 
-- Add `target.partition_by: [_ingest_date]` to `FeedSpec`.
-- In `io/staging.py`, split a member's frame by partition value before writing,
-  so a file is never mixed.
-- In `io/sink.py`, create the table with a `PartitionSpec` and confirm
-  `add_files` accepts the staged files.
-- **Test:** two ingest dates in one job produce two partitions and one snapshot.
+The partition-aware staging split this item used to call for turned out to be
+**unnecessary**: `staging.write` already emits one Parquet per member, and a
+member holds one business day, so every staged file maps to exactly one partition
+value for free. The invariant is per *file*, not per archive.
 
-Watch for: `add_files` is stricter about partitioned tables than unpartitioned
-ones. If it fights, fall back to single-threaded `table.append()` over the staged
-files — the staging boundary makes that a contained swap.
+Refusals are structured errors, not crashes: `partition_column_missing`,
+`partition_spec_conflict` (the table already holds data laid out differently — a
+load never re-lays-out an existing table), and `mixed_partition_file` (one member
+spans two values; `add_files` catches this itself).
+
+Not done, and deliberately: partition transforms other than identity (`day`,
+`bucket`, `truncate`), and migrating a populated table onto a new spec.
 
 ### 3.2 Fixed-width as a built-in strategy
 
@@ -144,15 +147,19 @@ working reference; promote it.
 - **Test:** `acme_positions.txt` parses from YAML alone, with output identical to
   the plugin's. Keep the plugin as the extension-path example.
 
-### 3.3 Schema-drift policy
+### 3.3 Schema-drift policy — **done**
 
-`add_files` already refuses staged files whose schemas disagree, with a clear
-error. What's missing is a policy for "the feed grew a column".
+`policy.schema_change: fail | evolve`, default `fail`. On `evolve`, `sink.py`
+unifies the staged schemas and calls `union_by_name` on the table before
+`add_files`, which adds nullable columns only; a changed column *type* is still
+a hard failure. Catches drift within one job and across jobs, and fails as a
+structured `schema_drift` error (`blame: spec`) rather than an unhandled crash.
+Covered by five tests in `test_pipeline.py`.
 
-- Add `policy.schema_change: fail | evolve`, default `fail`.
-- On `evolve`, use pyiceberg's schema evolution to add nullable columns only.
-  Never widen or retype silently.
-- **Test:** a member with an extra column fails by default and evolves when asked.
+Two things worth knowing if you touch it: `pa.unify_schemas` raises
+`ArrowTypeError`, not `ArrowInvalid`, on a type conflict; and `add_files`
+rejects a file *wider* than the table but accepts a *narrower* one, reading the
+absent column as null.
 
 ### 3.4 Object-store sources
 

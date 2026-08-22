@@ -42,6 +42,31 @@ def _fail(exc: ParseError) -> None:
     )
 
 
+def _options(pairs: list[str] | None) -> dict:
+    """`--option business_date=2026-08-23` -> {"business_date": "2026-08-23"}.
+
+    Values stay strings. The framework has no opinion on what a parser wants;
+    interpreting them is the plugin's job, same as `parser.options` in the YAML.
+    """
+    out: dict[str, str] = {}
+    for pair in pairs or []:
+        key, sep, value = pair.partition("=")
+        if not sep or not key.strip():
+            _emit(
+                {
+                    "ok": False,
+                    "error": "bad_option",
+                    "message": f"--option expects key=value, got {pair!r}",
+                    "field": "--option",
+                    "hint": "Example: --option business_date=2026-08-23",
+                    "blame": "spec",
+                },
+                EXIT_SPEC,
+            )
+        out[key.strip()] = value
+    return out
+
+
 def _load(spec_path: Path) -> FeedSpec:
     try:
         return FeedSpec.from_yaml(spec_path)
@@ -74,12 +99,18 @@ def dry_run(
     sample: Path,
     head: int = 20,
     plugin_dir: Optional[Path] = typer.Option(None, help="directory of parser plugins"),
+    option: list[str] = typer.Option(
+        [], "--option", help="per-run parser input, key=value; repeatable"
+    ),
 ):
     """Parse a sample and report. Writes nothing, anywhere, ever."""
     feed = _load(spec)
     plugins.load_dir(plugin_dir or ROOT / "plugins")
+    # Parsed before the try: _emit raises typer.Exit to set the exit code, and
+    # the `except Exception` below would otherwise swallow it into a bug report.
+    ctx = plugins.ParseContext(member=sample.name, options=_options(option))
     try:
-        result = parse(feed.parser, sample.read_bytes())
+        result = parse(feed.parser, sample.read_bytes(), ctx)
     except ParseError as exc:
         _fail(exc)
         return
@@ -177,6 +208,9 @@ def run(
     ),
     workers: Optional[int] = None,
     executor: str = typer.Option("thread", help="serial | thread | process"),
+    option: list[str] = typer.Option(
+        [], "--option", help="per-run parser input, key=value; repeatable"
+    ),
 ):
     """The real ingestion: fan out over members, then one Iceberg commit."""
     from .io.runner import run as run_job
@@ -188,7 +222,7 @@ def run(
         feed.source.pattern = source
     plugins.load_dir(ROOT / "plugins")
     result = run_job(feed, workspace, plugin_dir=str(ROOT / "plugins"),
-                     workers=workers, executor=executor)
+                     workers=workers, executor=executor, options=_options(option))
     _emit(
         {"ok": result.status in ("ok", "partial"), **result.to_dict()},
         0 if result.status in ("ok", "partial") else EXIT_FILE,
