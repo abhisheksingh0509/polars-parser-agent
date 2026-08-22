@@ -29,6 +29,7 @@ uv run ffe dry-run  feeds/msci-test.yaml /tmp/msci/<member>.txt   #    dry-run e
 uv run ffe run      feeds/msci-test.yaml --table sandbox.msci_test --workspace ./_x
 uv run ffe tables   --workspace ./_x                              # 5. trial run, verify
 uv run ffe run      feeds/msci-test.yaml                          # 6. for real
+                    # ... --option business_date=2026-08-23 to override the file
 uv run ffe tables                                                 # 7. verify
 ```
 
@@ -201,6 +202,9 @@ the column list carries the five lineage columns added at staging time:
 | `_spec_hash` | which parse logic produced it |
 | `_ingested_at` | UTC naive `Datetime("us")` — **load** time, not business date |
 
+The business date is a *parser* column, not lineage — for `msci-test` it is
+`business_date`. See [Supplying the business date](#supplying-the-business-date).
+
 To read rows back:
 
 ```python
@@ -258,24 +262,78 @@ Two consequences worth internalising:
   it is how a backfill works. What must stay true is that each *staged file*
   carries a single date, which the assumption gives you for free.
 
-## Known gap — no business date, and no partitioning
+## Supplying the business date
 
-Two gaps that get conflated. Both are real today; the one-zip-one-day assumption
-makes the second much cheaper than `BUILD-PLAN` currently assumes.
+Two ways, and they layer. `engine` merges `{**spec.options, **ctx.options}`, so
+precedence is **per-run beats per-spec beats the file** — someone passing a date
+explicitly is correcting what the drop says.
 
-**1. There is no business date on a row.** `_ingested_at` is when the loader ran
-— re-load an 0823 archive today and it is stamped today. Nothing lifts the feed's
-own date onto the rows. Where to get it, best fit first:
+**1. The parser reads it from the file.** Each member carries
+`# Generated: YYYY-MM-DD`, so `plugins/msci_test.py` parses that into a
+`business_date` column of type `Date`. Nothing to pass; the common case is free.
 
-| Source of the date | How | Trade-off |
-|---|---|---|
-| **The zip filename** | `ctx.member` is `<archive>.zip!<member>`, so `ctx.member.split("!", 1)[0]` is the archive name inside the plugin. Pull the date out with a regex held in `parser.options` (which reaches the plugin as `ctx.options` — `engine.py` merges `{**spec.options, **ctx.options}`), so the convention is config, not code. | **Best fit.** One lookup, correct for every member in the archive by construction, and it still works when the glob spans many days — each member resolves its own archive's date. Needs the naming convention to be stable. |
-| **A header line inside each member** | Each member carries `# Generated: 2026-08-23`. Parse it. | Source-faithful, and survives a renamed archive. But it is per-member, so members can disagree — and a disagreement means the archive violates the one-day assumption. If you use this, **assert the agreement** and reject the job rather than picking one silently. |
-| **A per-run `--date` argument** | Not implemented. `ffe run` exposes `--table`, `--source`, `--workers`, `--executor`; there is no `--date` or `--option k=v`, and `runner.py` builds `ParseContext(member=…, job_id=…)` without threading anything further. | Only correct when one run handles exactly one zip — it stamps every member in the job identically, so it silently corrupts a multi-zip backfill. Also the most plumbing: a CLI flag, a field to carry it, and a change to `ParseContext`. |
+**2. The run supplies it.** `--option key=value`, repeatable, on both `run` and
+`dry-run`:
 
-**2. Tables are unpartitioned.** `FeedSpec.Target` accepts only `table`, and
-`sink.commit` calls `create_table_if_not_exists(identifier, schema)` with no
-`PartitionSpec`. Every commit appends to one flat table.
+```bash
+uv run ffe run     feeds/msci-test.yaml --option business_date=2026-08-23
+uv run ffe dry-run feeds/msci-test.yaml sample.txt --option business_date=2026-08-23
+```
+
+For a backfill of a mislabelled drop, or any feed whose files don't state their
+own date. The flag is deliberately generic rather than a `--date`: the framework
+has no opinion on what a parser wants, exactly as with `parser.options` in the
+YAML. Values arrive as **strings**; interpreting them is the plugin's job.
+
+A date that won't parse lands **null** rather than raising. A silently-wrong date
+is worse than an empty one, and `all_null_columns` puts it in front of you on the
+next dry-run.
+
+Same mechanism for anything else per-run — a cutoff, a region, a mode. Read it in
+the plugin from `ctx.options`, never from a module constant.
+
+## Schema drift — when the feed grows a column
+
+`policy.schema_change` decides, and it defaults to `fail`:
+
+```yaml
+policy:
+  schema_change: fail     # fail | evolve
+```
+
+**`fail`** refuses the commit and lands nothing. The error names the knob and the
+column, and `blame: spec` / exit 2 means you can fix it:
+
+```json
+{"error": "schema_drift", "field": "policy.schema_change",
+ "observed": {"distinct_schemas": 2, "columns_not_in_every_file": ["region"]},
+ "hint": "Set policy.schema_change to 'evolve' to add the new columns as nullable…",
+ "blame": "spec"}
+```
+
+Default to leaving this alone. A column you did not expect is more often a parser
+bug — a misread header, a shifted delimiter — than a real upstream change, and
+failing costs you one job while evolving on a bug quietly corrupts a table.
+
+**`evolve`** adds the new columns as nullable and commits. It catches drift in
+both directions:
+
+- *within one job* — members of the same archive disagree
+- *across jobs* — the table already exists and today's drop is wider
+
+Rows loaded before the column existed read back `null`; a member missing a column
+the table has is always fine, since Iceberg reads an absent column as null.
+
+**Evolution only ever adds.** A column whose *type* changed is still a hard
+failure under `evolve`, with its own error — adding a column is safe, retyping
+one rewrites the meaning of data already committed. Do that deliberately, not as
+a side effect of a load.
+
+## Known gap — partitioning
+
+`FeedSpec.Target` accepts only `table`, and `sink.commit` calls
+`create_table_if_not_exists(identifier, schema)` with no `PartitionSpec`. Every
+commit appends to one flat table.
 
 [`BUILD-PLAN.md` §3.1](BUILD-PLAN.md) scopes this as three pieces — a
 `target.partition_by` field, a partition-aware split in `staging.py`, and a
@@ -283,22 +341,21 @@ own date onto the rows. Where to get it, best fit first:
 because `add_files` refuses a Parquet file spanning two partition values.
 
 **Under one-zip-one-day, that split is unnecessary.** `staging.write` already
-emits one Parquet per member, every member of an archive shares one date, so
-each staged file maps to exactly one partition value for free. What remains is
-the easy two-thirds: add the field, and build the `PartitionSpec`. Partition on
-the derived business date, not on `_ingested_at` — a re-load must land in the
-day it belongs to, not the day you ran it.
+emits one Parquet per member, every member of an archive shares one date, so each
+staged file maps to exactly one partition value for free. What remains is the
+easy two-thirds: add the field, and build the `PartitionSpec`. Partition on
+`business_date`, not `_ingested_at` — a re-load must land in the day it belongs
+to, not the day you ran it.
 
-One ordering note: partitioning is only worth doing *after* the date column
-exists, and a table already committed unpartitioned cannot simply grow a
-partition spec that applies to its existing files. Do gap 1 first, on a sandbox
-table.
+One ordering note: a table already committed unpartitioned cannot simply grow a
+partition spec that applies to its existing files. Do this on a sandbox table
+first.
 
-Before picking an approach, note the design tension: `promote_fields` already
-lifts a business date onto every row for `sectioned` feeds, and
+Before building on it, note the design tension: `promote_fields` already lifts a
+business date onto every row for `sectioned` feeds, and
 [`DESIGN.md` open question 5](DESIGN.md) asks whether that belongs in bronze at
-all, since it is a transform and bronze is meant to be source-faithful. Deriving
-a date from an archive name is the same argument in a different coat — worth
+all, since it is a transform and bronze is meant to be source-faithful. Reading a
+date out of a comment line is the same argument in a different coat — worth
 settling once, for every feed, rather than per feed.
 
 ## Step 9 — commit the feed

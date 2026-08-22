@@ -181,11 +181,29 @@ def run(
         return result
 
     # ---- step 3: one writer, one snapshot --------------------------------
-    result.commit = sink.commit(workspace / "warehouse", spec.target.table, good_files)
-    if reject_files:
-        result.reject_commit = sink.commit(
-            workspace / "warehouse", f"{spec.target.table}_rejects", reject_files
+    # Schema drift surfaces here rather than in a worker, because it is a
+    # property of the SET of staged files, not of any one member. It is a
+    # policy decision with a structured error, so it fails the job cleanly
+    # instead of escaping as an unhandled crash.
+    try:
+        result.commit = sink.commit(
+            workspace / "warehouse",
+            spec.target.table,
+            good_files,
+            schema_change=spec.policy.schema_change,
         )
+        if reject_files:
+            result.reject_commit = sink.commit(
+                workspace / "warehouse",
+                f"{spec.target.table}_rejects",
+                reject_files,
+                schema_change=spec.policy.schema_change,
+            )
+    except ParseError as exc:
+        result.status = "failed"
+        result.errors.append(exc.to_dict())
+        ledger.finish(job_id, "failed", result.rows, result.rejects, error=exc.message)
+        return result
 
     result.status = "ok" if not result.failed else "partial"
     ledger.finish(

@@ -177,6 +177,9 @@ class Policy(BaseModel):
     on_reject: Literal["quarantine", "fail"] = "quarantine"
     max_reject_ratio: float = 0.01
     workers: int | None = None
+    # "the feed grew a column" -- fail by default, because a schema you did not
+    # ask for is usually a parser bug, not a real change upstream.
+    schema_change: Literal["fail", "evolve"] = "fail"
 
 
 class FeedSpec(BaseModel):

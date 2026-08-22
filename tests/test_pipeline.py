@@ -156,3 +156,126 @@ def test_run_options_reach_the_parser_and_stay_picklable(tmp_path, zip_of):
 
     # and the default is an empty dict, never None -- ctx.options is indexed
     assert ParseContext().options == {}
+
+
+# --------------------------------------------------------------------------- #
+# schema drift: "the feed grew a column"
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def drifting_zip(tmp_path):
+    """Two members, the second carrying an extra field the first lacks."""
+
+    def build(name: str = "drift.zip") -> Path:
+        path = tmp_path / name
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr(
+                "narrow.txt",
+                "F|a|20260822\nH|20260822|issue|id|name\nI|1|Abhishek\nE|issue\n",
+            )
+            z.writestr(
+                "wide.txt",
+                "F|b|20260822\nH|20260822|issue|id|name|region\n"
+                "I|2|Nilanjana|EMEA\nE|issue\n",
+            )
+        return path
+
+    return build
+
+
+def test_schema_drift_fails_the_job_by_default(tmp_path, drifting_zip):
+    spec = feed_for(drifting_zip(), "bronze.drift_fail")
+    assert spec.policy.schema_change == "fail"
+
+    result = run(spec, tmp_path / "ws", plugin_dir=str(ROOT / "plugins"))
+
+    assert result.status == "failed"
+    assert result.commit == {}  # nothing landed
+    drift = [e for e in result.errors if e.get("error") == "schema_drift"]
+    assert drift, result.errors
+    # the error must name the knob and the column, not just complain
+    assert drift[0]["field"] == "policy.schema_change"
+    assert drift[0]["blame"] == "spec"
+    assert "region" in drift[0]["observed"]["columns_not_in_every_file"]
+
+
+def test_schema_drift_evolves_when_asked(tmp_path, drifting_zip):
+    spec = feed_for(drifting_zip(), "bronze.drift_evolve", schema_change="evolve")
+    result = run(spec, tmp_path / "ws", plugin_dir=str(ROOT / "plugins"))
+
+    assert result.status == "ok", result.errors
+    df = sink.scan(tmp_path / "ws" / "warehouse", "bronze.drift_evolve")
+    assert "region" in df.columns
+    assert len(df) == 2
+    # the member that never had the column reads back null, not an error
+    assert sorted(df["region"].to_list(), key=lambda v: (v is None, v)) == ["EMEA", None]
+
+
+def test_a_column_added_in_a_later_job_evolves_the_existing_table(tmp_path):
+    """Drift across jobs, not just within one -- the common real case."""
+    ws = tmp_path / "ws"
+    first = tmp_path / "day1.zip"
+    with zipfile.ZipFile(first, "w") as z:
+        z.writestr("a.txt", "F|a|20260822\nH|20260822|issue|id|name\nI|1|A\nE|issue\n")
+    second = tmp_path / "day2.zip"
+    with zipfile.ZipFile(second, "w") as z:
+        z.writestr(
+            "b.txt",
+            "F|b|20260823\nH|20260823|issue|id|name|region\nI|2|B|EMEA\nE|issue\n",
+        )
+
+    ok = run(feed_for(first, "bronze.grew", schema_change="evolve"), ws,
+             plugin_dir=str(ROOT / "plugins"))
+    assert ok.status == "ok"
+
+    grown = run(feed_for(second, "bronze.grew", schema_change="evolve"), ws,
+                plugin_dir=str(ROOT / "plugins"))
+    assert grown.status == "ok", grown.errors
+
+    df = sink.scan(ws / "warehouse", "bronze.grew")
+    assert len(df) == 2 and "region" in df.columns
+
+
+def test_the_same_growth_is_refused_without_the_policy(tmp_path):
+    """Default policy must catch cross-job drift too, not only within a job."""
+    ws = tmp_path / "ws"
+    first = tmp_path / "day1.zip"
+    with zipfile.ZipFile(first, "w") as z:
+        z.writestr("a.txt", "F|a|20260822\nH|20260822|issue|id|name\nI|1|A\nE|issue\n")
+    second = tmp_path / "day2.zip"
+    with zipfile.ZipFile(second, "w") as z:
+        z.writestr(
+            "b.txt",
+            "F|b|20260823\nH|20260823|issue|id|name|region\nI|2|B|EMEA\nE|issue\n",
+        )
+
+    assert run(feed_for(first, "bronze.strict"), ws,
+               plugin_dir=str(ROOT / "plugins")).status == "ok"
+
+    blocked = run(feed_for(second, "bronze.strict"), ws,
+                  plugin_dir=str(ROOT / "plugins"))
+    assert blocked.status == "failed"
+    assert blocked.errors[0]["error"] == "schema_drift"
+    assert len(sink.scan(ws / "warehouse", "bronze.strict")) == 1  # unchanged
+
+
+def test_evolve_adds_columns_but_never_retypes_one():
+    """Adding a column is safe. Retyping rewrites data already committed."""
+    import pyarrow as pa
+
+    from ffe.core.report import ParseError
+    from ffe.io.sink import _unify
+
+    narrow = pa.schema([("id", pa.string())])
+    wider = pa.schema([("id", pa.string()), ("region", pa.string())])
+    retyped = pa.schema([("id", pa.int64())])
+
+    assert [f.name for f in _unify("t", [narrow, wider], evolve=True)] == [
+        "id",
+        "region",
+    ]
+    with pytest.raises(ParseError) as caught:
+        _unify("t", [narrow, retyped], evolve=True)
+    assert caught.value.code == "schema_drift"
+    assert "TYPE" in caught.value.message

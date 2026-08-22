@@ -138,7 +138,18 @@ target:
   table: bronze.issues
 policy:
   max_reject_ratio: 0.01           # exceeded -> job fails, nothing commits
+  schema_change: fail              # fail | evolve, when the feed grows a column
 ```
+
+A parser can also take per-run input — a business date, a cutoff — without
+editing the spec:
+
+```bash
+uv run ffe run feeds/my-feed.yaml --option business_date=2026-08-23
+```
+
+It reaches a plugin as `ctx.options`, layered over `parser.options` from the
+YAML.
 
 ---
 
