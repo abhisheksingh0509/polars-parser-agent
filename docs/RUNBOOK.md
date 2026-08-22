@@ -6,7 +6,10 @@ Iceberg, without going back and forth.
 
 The worked example throughout is **`msci-test`**, onboarded from
 `tests/fixtures/msci_test.txt` and pointed at `data/msci_test/*.zip`. Substitute
-your own feed name and paths.
+your own feed name and paths. Its shape — **one zip per business day, several
+files inside** — drives the partitioning discussion at the end; the numbers in
+the steps come from a hand-built sample archive and are illustration, not the
+real volumes.
 
 **Preconditions:** `gates.passed: true` on the sample, `uv run pytest` green, and
 a human has looked at the DataFrame. If any of those is false, you are still in
@@ -58,7 +61,9 @@ source:
 ```
 
 `pattern` is resolved with `glob` relative to the **current working directory**,
-so run `ffe` from the repo root or make the pattern absolute. `members` is
+so run `ffe` from the repo root or make the pattern absolute. A pattern matching
+several archives is a **multi-day backfill** — see
+[The unit of a business day is the zip](#the-unit-of-a-business-day-is-the-zip). `members` is
 matched with `fnmatch` against both the full archive path and the bare filename,
 so `"*.txt"` catches `sub/dir/taxonomy.txt`.
 
@@ -121,8 +126,9 @@ Two things to check across members that a single dry-run cannot show you:
    derives column names from each member's own header row and only falls back to
    `FALLBACK_COLUMNS` if there isn't one. All three members carry the same
    header, so they agree.
-2. **`trailer_row_count: "match"` on each.** For `msci-test` that is 5, 3, and 4
-   rows — **12 total**, the number step 7 must show.
+2. **`trailer_row_count: "match"` on each.** Sum the declared counts across
+   members — that total is what step 7 must show. In the sample archive it is
+   5 + 3 + 4 = **12**.
 
 `blame` in an error payload decides your next move, and the exit code mirrors it:
 `spec` / exit 2 → edit the YAML and retry; `file` / exit 3 → the file is
@@ -232,39 +238,68 @@ the drop already landed, either move the source files aside or roll the Iceberg
 table back to the prior snapshot. Dedupe downstream on `_src_file` +
 `_src_line_no` if you need it cheaply.
 
+## The unit of a business day is the zip
+
+**One archive holds exactly one day's data.** It may hold many files, but they
+all belong to the same business date. This is a property of the feed, not of
+`ffe`, and it is the assumption everything below rests on — check it before
+reusing any of this for another feed.
+
+> The zip currently in `data/msci_test/` is a hand-built **sample** and violates
+> this: it carries three dates in one archive. Don't model the real naming
+> convention or the partition design on it.
+
+Two consequences worth internalising:
+
+- **The business date belongs to the archive, not the member.** Deriving it from
+  a member's filename is reading the wrong thing — a real member may not carry a
+  date at all, and if it does it is redundant.
+- **A glob that matches several zips is a multi-day job**, and that is fine —
+  it is how a backfill works. What must stay true is that each *staged file*
+  carries a single date, which the assumption gives you for free.
+
 ## Known gap — no business date, and no partitioning
 
-Two distinct gaps that get conflated. Both are real today.
+Two gaps that get conflated. Both are real today; the one-zip-one-day assumption
+makes the second much cheaper than `BUILD-PLAN` currently assumes.
 
-**1. Tables are unpartitioned.** `sink.commit` calls
-`create_table_if_not_exists(identifier, schema)` with no `PartitionSpec`, and
-`FeedSpec.Target` accepts only `table`. Every commit appends to one flat table.
-Scoped as [`BUILD-PLAN.md` §3.1](BUILD-PLAN.md) — `target.partition_by`, a
-partition-aware split in `staging.py` so one staged file maps to exactly one
-partition value, and a `PartitionSpec` in `sink.py`. The staging split is the
-part that matters: `add_files` is markedly stricter about partitioned tables, and
-a file spanning two partition values will be refused.
+**1. There is no business date on a row.** `_ingested_at` is when the loader ran
+— re-load an 0823 archive today and it is stamped today. Nothing lifts the feed's
+own date onto the rows. Where to get it, best fit first:
 
-**2. There is no business date to partition *on*.** `_ingested_at` is when the
-loader ran — re-load a 2026-08-23 file today and it is stamped today. The feed's
-own date lives in the data (`taxonomy_setup_20260823.txt`, and a
-`# Generated: 2026-08-23` comment inside each member), and nothing currently
-lifts it onto the rows.
-
-Three ways to supply it, in increasing order of work:
-
-| Approach | How | Cost |
+| Source of the date | How | Trade-off |
 |---|---|---|
-| **Parser derives it** | The plugin already receives `ctx.member` (`archive.zip!taxonomy_setup_20260823.txt`). Parse the date out and emit a `business_date` column. | Small, and it is source-faithful — the value comes from the file. **Best fit for `msci-test` today.** |
-| **Static, via the spec** | `parser.options` in the YAML reaches the plugin as `ctx.options` — `engine.py` merges `{**spec.options, **ctx.options}`. Read a tunable from there. | Free, but it is per-**spec**, not per-**run**. Wrong for a value that changes each drop. |
-| **Per-run CLI argument** | Not implemented. `ffe run` exposes `--table`, `--source`, `--workers`, `--executor`; there is no `--option k=v` or `--date`, and `runner.py` constructs `ParseContext(member=…, job_id=…)` without threading anything else through. | Requires a CLI flag, a field on `FeedSpec` or the run call, and plumbing into `ParseContext`. |
+| **The zip filename** | `ctx.member` is `<archive>.zip!<member>`, so `ctx.member.split("!", 1)[0]` is the archive name inside the plugin. Pull the date out with a regex held in `parser.options` (which reaches the plugin as `ctx.options` — `engine.py` merges `{**spec.options, **ctx.options}`), so the convention is config, not code. | **Best fit.** One lookup, correct for every member in the archive by construction, and it still works when the glob spans many days — each member resolves its own archive's date. Needs the naming convention to be stable. |
+| **A header line inside each member** | Each member carries `# Generated: 2026-08-23`. Parse it. | Source-faithful, and survives a renamed archive. But it is per-member, so members can disagree — and a disagreement means the archive violates the one-day assumption. If you use this, **assert the agreement** and reject the job rather than picking one silently. |
+| **A per-run `--date` argument** | Not implemented. `ffe run` exposes `--table`, `--source`, `--workers`, `--executor`; there is no `--date` or `--option k=v`, and `runner.py` builds `ParseContext(member=…, job_id=…)` without threading anything further. | Only correct when one run handles exactly one zip — it stamps every member in the job identically, so it silently corrupts a multi-zip backfill. Also the most plumbing: a CLI flag, a field to carry it, and a change to `ParseContext`. |
 
-Note the design tension before picking: `promote_fields` already lifts a business
-date onto every row for `sectioned` feeds, and
+**2. Tables are unpartitioned.** `FeedSpec.Target` accepts only `table`, and
+`sink.commit` calls `create_table_if_not_exists(identifier, schema)` with no
+`PartitionSpec`. Every commit appends to one flat table.
+
+[`BUILD-PLAN.md` §3.1](BUILD-PLAN.md) scopes this as three pieces — a
+`target.partition_by` field, a partition-aware split in `staging.py`, and a
+`PartitionSpec` in `sink.py` — and calls the staging split the risky part,
+because `add_files` refuses a Parquet file spanning two partition values.
+
+**Under one-zip-one-day, that split is unnecessary.** `staging.write` already
+emits one Parquet per member, every member of an archive shares one date, so
+each staged file maps to exactly one partition value for free. What remains is
+the easy two-thirds: add the field, and build the `PartitionSpec`. Partition on
+the derived business date, not on `_ingested_at` — a re-load must land in the
+day it belongs to, not the day you ran it.
+
+One ordering note: partitioning is only worth doing *after* the date column
+exists, and a table already committed unpartitioned cannot simply grow a
+partition spec that applies to its existing files. Do gap 1 first, on a sandbox
+table.
+
+Before picking an approach, note the design tension: `promote_fields` already
+lifts a business date onto every row for `sectioned` feeds, and
 [`DESIGN.md` open question 5](DESIGN.md) asks whether that belongs in bronze at
 all, since it is a transform and bronze is meant to be source-faithful. Deriving
-the date from the filename is the same argument in a different coat — worth
-deciding once, for all feeds, rather than per feed.
+a date from an archive name is the same argument in a different coat — worth
+settling once, for every feed, rather than per feed.
 
 ## Step 9 — commit the feed
 
