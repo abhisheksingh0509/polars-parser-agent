@@ -1,9 +1,9 @@
-# Test fixtures are byte-exact inputs. Never let git rewrite their line endings
-# or the same file parses differently on Windows than on the machine it was
-# authored on.
-tests/fixtures/** -text
-
-# Everything else: LF in the repo, native in the working tree.
+# Default: LF in the repo, native in the working tree.
 * text=auto eol=lf
 *.ps1 text eol=crlf
 *.bat text eol=crlf
+
+# Test fixtures are byte-exact inputs. Never let git rewrite their line endings
+# or the same file parses differently on Windows than on the machine it was
+# authored on. Listed last so it wins over the `*` rule above.
+tests/fixtures/** -text
