@@ -11,7 +11,9 @@ Layout:
 
 Every row (the header and each data row) follows the same mixed-delimiter
 grammar: four `|`-separated fields, the last of which is itself
-`::`-separated into three. That is the shape no built-in strategy covers,
+`::`-separated. The header declares how many parts that tail has, and the
+data rows are held to it -- so the feed can grow a column without every row
+turning into a reject. That is the shape no built-in strategy covers,
 which is why this file needs a plugin rather than a spec.
 
 Business date: one archive holds one day. The date is carried in the file's
@@ -59,15 +61,21 @@ def _business_date(value: str | None) -> date | None:
         return None
 
 
-def _split_row(text: str) -> list[str] | None:
-    """Split a header or data row: 4 `|` fields, the last `::`-split into 3."""
+def _split_row(text: str, tail_width: int | None = None) -> list[str] | None:
+    """Split a header or data row: 4 `|` fields, the last `::`-split further.
+
+    The tail width is not hardcoded. The header row declares how many `::`
+    parts this file carries, and the data rows are then held to exactly that --
+    so a feed that grows a column is read, not rejected, and the mismatch
+    surfaces at the Iceberg commit where `policy.schema_change` decides.
+    Hardcoding 3 here would have contradicted reading the header at all.
+    """
     parts = text.split("|")
     if len(parts) != 4:
         return None
     tail = parts[3].split("::")
-    if len(tail) != 3:
-        return None
-    return parts[:3] + tail
+    ok = len(tail) >= 2 if tail_width is None else len(tail) == tail_width
+    return parts[:3] + tail if ok else None
 
 
 @register("msci-test")
@@ -76,6 +84,7 @@ class MsciTest(ParserPlugin):
         lines = raw.decode("utf-8", errors="replace").splitlines()
 
         columns = None
+        tail_width = None
         in_data = False
         declared = None
         generated = None
@@ -103,17 +112,20 @@ class MsciTest(ParserPlugin):
             if not in_data:
                 # the header row between SCHEMA_START and DATA_BLOCK names
                 # the columns -- measured from the file, not hardcoded.
-                columns = _split_row(stripped) or columns
+                header = _split_row(stripped)
+                if header:
+                    columns, tail_width = header, len(header) - 3
                 continue
 
-            tokens = _split_row(stripped)
+            tokens = _split_row(stripped, tail_width)
             if tokens is None:
                 bad.append(
                     {
                         "_src_line_no": lineno,
                         "raw_line": stripped,
                         "_reject_reason": "expected 4 '|' fields with a "
-                        "3-part '::' tail on the last field",
+                        f"{tail_width or 3}-part '::' tail on the last field, "
+                        "as declared by this file's header",
                     }
                 )
                 continue

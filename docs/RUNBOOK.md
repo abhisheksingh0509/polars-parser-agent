@@ -253,6 +253,27 @@ reusing any of this for another feed.
 > this: it carries three dates in one archive. Don't model the real naming
 > convention or the partition design on it.
 
+### Generating test drops
+
+`msci-test-gen.py` builds archives in the real shape — one per business day,
+several members inside, each member stating its own date and row count:
+
+```bash
+uv run python msci-test-gen.py --clean               # a week into data/msci_test
+uv run python msci-test-gen.py --days 14 --parts 4
+```
+
+Output is deterministic, so regenerating produces identical bytes rather than
+churn. Two flags exist to exercise the failure paths rather than the happy one:
+
+| Flag | Produces | Exercises |
+|---|---|---|
+| `--drift` | a `Region` column from day 4 onwards | `policy.schema_change` — fails by default, lands with `evolve` |
+| `--bad-rows N` | N malformed rows per archive | the reject table and `max_reject_ratio` |
+
+`--bad-rows` will trip the default `max_reject_ratio: 0.01`, which is the point;
+raise it **in a sandbox spec only**, never in the production one.
+
 Two consequences worth internalising:
 
 - **The business date belongs to the archive, not the member.** Deriving it from

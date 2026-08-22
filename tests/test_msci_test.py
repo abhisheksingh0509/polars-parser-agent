@@ -114,3 +114,42 @@ def test_plugin_reports_carry_column_stats():
     result = parse(PluginParser(ref="msci-test"), FIXTURE.read_bytes())
     assert [c.name for c in result.report.columns] == result.frame.columns
     assert all(c.null_count == 0 for c in result.report.columns)
+
+
+def test_the_header_decides_how_wide_the_tail_is():
+    """A grown column is read, not rejected -- the header declares the width."""
+    grown = (
+        "# Generated: 2026-08-23\n"
+        "[SCHEMA_START]\n"
+        "Sector_ID|Industry_Group_ID|Industry_ID|Sub_Industry_ID"
+        "::Label_EN::Label_FR::Region\n"
+        "[DATA_BLOCK]\n"
+        "10|1010|101010|10101010::Energy::Énergie::EMEA\n"
+        "[SCHEMA_END]\n"
+        "TRLR_COUNT:1\n"
+    ).encode()
+
+    result = parse(PluginParser(ref="msci-test"), grown)
+    assert "Region" in result.frame.columns
+    assert result.frame["Region"].to_list() == ["EMEA"]
+    assert result.rejects is None
+
+
+def test_a_row_that_disagrees_with_its_own_header_is_rejected():
+    """Held to the declared width, not to a hardcoded one."""
+    mixed = (
+        "[SCHEMA_START]\n"
+        "Sector_ID|Industry_Group_ID|Industry_ID|Sub_Industry_ID"
+        "::Label_EN::Label_FR::Region\n"
+        "[DATA_BLOCK]\n"
+        "10|1010|101010|10101010::Energy::Énergie::EMEA\n"
+        "20|2010|201010|20101010::Short::Row\n"
+        "[SCHEMA_END]\n"
+        "TRLR_COUNT:2\n"
+    ).encode()
+
+    result = parse(PluginParser(ref="msci-test"), mixed)
+    assert len(result.frame) == 1
+    assert len(result.rejects) == 1
+    assert "4-part" in result.rejects["_reject_reason"][0]
+    assert result.rejects["_src_line_no"][0] == 5
