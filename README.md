@@ -33,8 +33,12 @@ on Windows, macOS and Linux:
 uv sync --extra dev
 ```
 
-That creates `.venv` and picks Python **3.12** from `requires-python` — leave that
-to uv, because 3.13+ is ahead of stable pyiceberg/pyarrow wheels.
+That creates `.venv` and installs Python **3.12** itself, from `requires-python` —
+you do not need a system 3.12, and you should not pick one by hand, because 3.13+
+is ahead of stable pyiceberg/pyarrow wheels. `uv.lock` is committed, so the
+resolution is identical every time.
+
+uv is genuinely required, not a convenience: it is what supplies the interpreter.
 
 ```bash
 uv run pytest -q                    # expect: 30 passed, 1 skipped
@@ -58,15 +62,6 @@ seconds and cleans up after itself.
 
 `--all-extras` adds the notebook dependencies, which also un-skip the two tests
 that execute the notebook: `uv run --all-extras pytest -q` gives **32 passed**.
-
-### Without uv
-
-```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\python.exe -m pip install -e ".[dev,notebook]"
-```
-
-Then activate the venv and drop the `uv run` prefix from every command below.
 
 ---
 
@@ -146,7 +141,7 @@ example of the extension path.
 |---|---|
 | `src/ffe/core/` | parsers. Pure functions, **no I/O** — which is why `dry-run` cannot write |
 | `src/ffe/io/` | source resolution, fan-out, staging, ledger, Iceberg sink |
-| `src/ffe/cli.py` | the seven verbs |
+| `src/ffe/cli.py` | the eight verbs |
 | `feeds/` | one YAML per feed. Versioned config, reviewed like code |
 | `plugins/` | your parser code |
 | `tests/fixtures/` | every feed's sample, pinned by a test |

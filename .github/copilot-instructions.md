@@ -11,26 +11,22 @@ wrong layer.
 ## Environment
 
 Everything runs through `uv`. One setup command, then `uv run` in front of every
-command — identical on Windows, macOS and Linux, so never emit a
-`.venv\Scripts\…` or `.venv/bin/…` path.
+command — never emit a `.venv/bin/…` path, and never activate anything.
 
 ```bash
 uv sync --extra dev
 uv run pytest
 ```
 
+`uv.lock` is committed, so the resolution is fixed.
+
 `uv sync` reads `requires-python` (`>=3.12,<3.13`) and installs Python **3.12**
 itself — 3.13+ is ahead of stable pyiceberg/pyarrow wheels. Do not pick an
 interpreter by hand, and do not use `python setup.py`, `pip install` into the
 global interpreter, or conda.
 
-If `uv` is genuinely unavailable, fall back to a venv and drop the `uv run`
-prefix from everything below:
-
-```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\python.exe -m pip install -e ".[dev]"
-```
+`uv` is not optional here — it supplies the 3.12 interpreter as well as the
+environment, and there is no system 3.12 to fall back to.
 
 ## Onboarding a feed
 
@@ -87,8 +83,8 @@ do not guess:
   retrying** and tell the human. No spec change will help.
 - exit 1 — a bug in `ffe`, not in the spec. Report it, don't work around it.
 
-The exit code is `$LASTEXITCODE` in PowerShell, `$?` in bash/zsh. `uv run`
-passes the CLI's exit code through unchanged.
+`uv run` passes the CLI's exit code through unchanged, so `$?` is the real
+verdict.
 
 ## Choosing a parser kind
 
@@ -158,11 +154,15 @@ Default executor is `thread`. Do not switch to `process` "for speed" — it was
 measured slower on every benchmark, because spawning workers that each re-import
 Polars costs more than the parsing saves until a job exceeds roughly 4M rows.
 
-## Windows specifics that have already bitten
+## Invariants that have already bitten once
+
+This runs on macOS, but keep these anyway: each one is pinned by a test, and each
+one is a real constraint if the project is ever rebuilt elsewhere (see
+`docs/BUILD-PLAN.md` Part 5).
 
 - **Paths into pyiceberg / SQLAlchemy** must go through `Path.as_posix()` or
-  `Path.as_uri()`. A plain `str()` gives backslashes and a bare drive letter,
-  which neither will parse. See `src/ffe/io/sink.py`.
+  `Path.as_uri()`. A plain `str()` on Windows gives backslashes and a bare drive
+  letter, which neither will parse. See `src/ffe/io/sink.py`.
 - **Line endings**: `.gitattributes` marks `tests/fixtures/**` as binary so git
   never rewrites them. Do not remove that. The framer normalises CRLF and strips
   a BOM; `test_crlf_and_bom_parse_identically_to_lf` pins it.

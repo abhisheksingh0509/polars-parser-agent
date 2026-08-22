@@ -1,4 +1,4 @@
-"""Six verbs. Every one emits JSON. This is the whole AI story: no agent lives
+"""Eight verbs. Every one emits JSON. This is the whole AI story: no agent lives
 here, but any agent can drive it.
 
 Exit codes are part of the contract:

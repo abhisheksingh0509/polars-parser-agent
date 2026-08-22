@@ -65,8 +65,7 @@ a folder on your disk.
 
 Every command below starts with `uv run`, which runs it inside this project's
 environment. If you'd rather not type it, activate the venv once
-(`source .venv/bin/activate`, or `.venv\Scripts\Activate.ps1` on Windows) and
-drop the prefix.
+(`source .venv/bin/activate`) and drop the prefix.
 
 ---
 

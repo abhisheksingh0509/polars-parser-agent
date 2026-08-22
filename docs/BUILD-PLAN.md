@@ -1,19 +1,28 @@
 # Build plan
 
-For picking this up on another machine — in particular a Windows machine with
-GitHub Copilot. Read [`DESIGN.md`](DESIGN.md) for *why*; this is *what to do*, in
-order, with a verifiable exit criterion for each step.
+What to do, in order, with a verifiable exit criterion for each step. Read
+[`DESIGN.md`](DESIGN.md) for *why*; this is *what to do*.
+
+There are two ways to use this file:
+
+| If you are | Read |
+|---|---|
+| **working in this repo** | [Part 1](#part-1--get-it-green) to confirm it's green, then [Part 2](#part-2--migrate-the-real-in-house-parsers) — migrating the in-house parsers is the actual work. [Part 3](#part-3--remaining-framework-work) and [Part 4](#part-4--deployment-shape) are what's left to build. |
+| **recreating the project from scratch, with only the docs** | [Part 5](#part-5--recreating-this-from-the-docs). `DESIGN.md` plus that part is the whole specification — no other file needs to travel. |
+
+The repo itself runs on macOS. Windows is used only for the second case, which is
+why Part 5 restates the invariants that would otherwise live only in the code and
+in the agent instructions.
 
 Agent instructions live in
-[`../.github/copilot-instructions.md`](../.github/copilot-instructions.md) and
-Copilot reads them automatically. Nothing below repeats them.
+[`../.github/copilot-instructions.md`](../.github/copilot-instructions.md), which
+Claude Code and Copilot read automatically. Parts 1–4 don't repeat them.
 
-Every command goes through `uv run`, so it is identical on Windows, macOS and
-Linux — no activation, no `.venv\Scripts\…` vs `.venv/bin/…` split.
+Every command goes through `uv run`.
 
 ---
 
-## Part 1 — get it green on Windows
+## Part 1 — get it green
 
 Do this first and do not skip the verification. Everything else assumes it.
 
@@ -27,21 +36,12 @@ uv run python scripts/smoke.py      # expect: 19/19, "smoke test OK"
 nothing to pick by hand. The skip is the notebook test —
 `uv run --all-extras pytest -q` runs it too and gives 32 passed.
 
-**Exit criterion: 30 tests and 19 smoke checks pass on Windows.**
+**Exit criterion: 30 tests and 19 smoke checks pass.**
 
-Known Windows failure modes, all already handled — if one reappears, it is a
-regression, not a new problem:
-
-| Symptom | Cause | Where |
-|---|---|---|
-| `Could not parse SQLAlchemy URL` / `unsupported scheme` on commit | a Windows path passed as `str()` — backslashes and a bare drive letter | `io/sink.py` uses `as_posix()` / `as_uri()` |
-| A fixture parses differently than on macOS | git rewrote CRLF in a fixture | `.gitattributes` marks `tests/fixtures/**` binary |
-| `UnicodeEncodeError` writing output | cp1252 console | CLI emits ASCII-escaped JSON |
-| `--executor process` hangs or re-runs the CLI | spawn re-imports the worker | `_process` is module level in `io/runner.py` — keep it there |
-| pyarrow / pyiceberg wheel won't install | Python 3.13+ | pin 3.12 |
-
-If tests fail for any *other* reason, fix the code, add a test that pins it, and
-note it in the table above.
+If something fails, check [the traps in Part 5](#traps-that-have-already-cost-a-day)
+before debugging — every one of them is already handled here, so a reappearance is
+a regression rather than a new problem. If it fails for any *other* reason, fix the
+code, add a test that pins it, and add it to that table.
 
 ---
 
@@ -190,10 +190,53 @@ All four are interface swaps behind `io/sink.py` and `io/ledger.py`. Nothing in
 
 ---
 
-## Appendix — rebuilding from scratch
+## Part 5 — recreating this from the docs
 
-If only the docs travel and not the code, `DESIGN.md` plus this module list is
-enough to reconstruct it. Build in this order; each step is testable alone.
+This is the path where the code doesn't travel and the docs do: rebuilding the
+project from scratch on another machine, from [`DESIGN.md`](DESIGN.md) and this
+part. Those two files are the whole specification — `DESIGN.md` carries the *why*,
+the FeedSpec shape, the plugin SPI, the error design, and two worked examples with
+their expected output; this part carries the build order and the invariants.
+
+### Before writing any code
+
+Python **3.12** specifically. 3.13+ is ahead of the stable pyiceberg and pyarrow
+wheels, and you will lose an afternoon to a build failure that has nothing to do
+with your code.
+
+So the first thing in the new `pyproject.toml` is the constraint, not a dependency:
+
+```toml
+[project]
+requires-python = ">=3.12,<3.13"
+dependencies = ["polars>=1.0", "pydantic>=2.7", "pyarrow>=16",
+                "pyiceberg[sql-sqlite]>=0.7", "typer>=0.12", "pyyaml>=6"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+ffe = "ffe.cli:app"
+```
+
+From then on `uv sync --extra dev` supplies the interpreter as well as the
+environment, so nobody has to have a 3.12 installed or choose one by hand. Commit
+the resulting `uv.lock`.
+
+### Two invariants that are cheap now and expensive later
+
+Both are architectural. Retrofitting either one means rewriting the layer.
+
+- **`core` imports nothing from `io`.** This is what makes `dry-run` structurally
+  incapable of writing anywhere — not a convention anyone has to remember, a fact
+  about the import graph. Worth an explicit test.
+- **No Python object per line.** Measured at 20x the cost of the parse itself.
+  Structure detection finds byte boundaries; Polars parses. Fixing this after the
+  fact took throughput from 1.6M to 5.2M rows/s.
+
+### Build order
+
+Each step is testable alone, and depends only on what came before it.
 
 | # | Module | Responsibility | Depends on |
 |---|---|---|---|
@@ -212,14 +255,31 @@ enough to reconstruct it. Build in this order; each step is testable alone.
 | 13 | `io/sink.py` | `add_files` commit. Paths via `as_posix()`/`as_uri()`. | 11 |
 | 14 | `io/runner.py` | fan out, apply gates, then **one** commit. `_process` module level. | 7, 10–13 |
 | 15 | `scaffold.py` | `new-parser` templates | — |
-| 16 | `cli.py` | seven verbs, JSON out, exit codes 2/3/1 | all |
+| 16 | `cli.py` | eight verbs, JSON out, exit codes 2/3/1 | all |
 
-Write the tests from `tests/` alongside — they encode the contracts more
-precisely than prose can. Start with the two worked examples in `DESIGN.md` as
-fixtures; if those parse correctly the design is being followed.
+Write the tests alongside, not afterwards — they encode the contracts more
+precisely than prose can. Use the two worked examples in `DESIGN.md` as your first
+fixtures: if those parse to the output shown there, the design is being followed.
 
-Two rules that are easy to lose and expensive to retrofit:
+### Traps that have already cost a day
 
-- **`core` imports nothing from `io`.** That is what makes `dry-run` unable to
-  write, and it is worth an explicit check.
-- **No Python object per line.** Measured at 20x the cost of the actual parse.
+Every one of these is handled in the current code. If you are rebuilding, get them
+right the first time; if you are working in this repo and one reappears, it's a
+regression.
+
+| Symptom | Cause | The fix that is already in place |
+|---|---|---|
+| `Could not parse SQLAlchemy URL` / `unsupported scheme` on commit | a Windows path handed over as `str()` — backslashes and a bare drive letter, which neither pyiceberg nor SQLAlchemy will parse | `io/sink.py` goes through `Path.as_posix()` / `Path.as_uri()` |
+| a fixture parses differently on another machine | git rewrote CRLF inside a test fixture | `.gitattributes` marks `tests/fixtures/**` as binary; the framer normalises CRLF and strips a BOM, pinned by `test_crlf_and_bom_parse_identically_to_lf` |
+| `UnicodeEncodeError` when printing a result | a cp1252 console meeting a non-ASCII value | the CLI emits ASCII-escaped JSON on purpose |
+| `--executor process` hangs, or re-runs the CLI from the top | `spawn` re-imports the worker, so worker code must be importable at module level | `_process` in `io/runner.py` is module level — not a closure, not a lambda |
+| pyarrow / pyiceberg wheels won't install | Python 3.13+ | pin 3.12 |
+
+### How you know you're done
+
+- the two worked examples from `DESIGN.md` parse to the output documented there
+- a multi-member archive fans out and lands in **one** Iceberg snapshot, with
+  `_src_file` and `_src_line_no` on every row
+- a feed over `max_reject_ratio` commits **nothing** — not a partial load
+- `dry-run` cannot write, and you have a test asserting the import graph that
+  guarantees it
