@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.egg-info/
+_ffe/
+_w1/
+_w8/
+_x/
+_y/
+_z/
+_probe/
+data/
+.DS_Store
+_notebook_demo/
+_t/
+.ipynb_checkpoints/

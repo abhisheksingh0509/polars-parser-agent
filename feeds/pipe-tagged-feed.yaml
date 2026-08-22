@@ -1,0 +1,30 @@
+name: pipe-tagged-feed
+source:
+  pattern: "data/issues/*.zip"
+  members: "*.txt"
+parser:
+  kind: sectioned
+  structure:
+    strategy: record_tag
+    delimiter: "|"
+    tag_position: 0
+    records:
+      F: { kind: file_header, fields: [tag, file_id, business_date] }
+      H: { kind: header }
+      I: { kind: data }
+      E: { kind: trailer, fields: [tag, entity] }
+    unknown_tag: reject
+  header:
+    parser: name_row
+    skip_leading_fields: 3
+  data:
+    parser: delimited
+    delimiter: "|"
+    drop_columns: [tag]
+  coerce:
+    schema_override: { id: int64 }
+  validate:
+    require_trailer: true
+    promote_fields: [business_date, file_id]
+target:
+  table: bronze.issues

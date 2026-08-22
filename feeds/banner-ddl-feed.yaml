@@ -1,0 +1,27 @@
+name: banner-ddl-feed
+source:
+  pattern: "data/banner/*.zip"
+  members: "*.txt"
+parser:
+  kind: sectioned
+  framer: { encoding: utf-8 }
+  structure:
+    strategy: sentinel
+    sentinel: "*"
+    collapse_runs: true
+    blocks:
+      - { kind: header,  ordinal: 0, skip_leading: 1, drop_blank: true }
+      - { kind: data,    ordinal: 1 }
+      - { kind: trailer, ordinal: 2, optional: true }
+  header:
+    parser: ddl
+  data:
+    parser: delimited
+    delimiter: ","
+    ragged: truncate
+  validate:
+    trailer_token: END
+target:
+  table: bronze.people
+policy:
+  max_reject_ratio: 0.05

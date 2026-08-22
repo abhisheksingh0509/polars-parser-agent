@@ -1,0 +1,52 @@
+"""The fast path (a file that is just a file) and the plugin SPI."""
+
+from pathlib import Path
+
+from ffe.core.engine import parse
+from ffe.core.plugins import load_dir
+from ffe.core.spec import Coerce, NativeParser, PluginParser
+
+ROOT = Path(__file__).parent.parent
+FIX = Path(__file__).parent / "fixtures"
+
+
+def test_native_csv_needs_no_code():
+    spec = NativeParser(coerce=Coerce(schema_override={"id": "int64", "score": "int64"}))
+    r = parse(spec, (FIX / "plain.csv").read_bytes())
+    assert r.frame["id"].to_list() == [1, 2]
+    assert str(r.frame.schema["score"]) == "Int64"
+    assert r.frame["_src_line_no"].to_list() == [2, 3]  # header is line 1
+
+
+def test_native_types_are_frozen_by_the_spec_not_inferred():
+    """No schema_override means everything stays text. Inference is a
+    spec-authoring aid, never a runtime behaviour."""
+    r = parse(NativeParser(), (FIX / "plain.csv").read_bytes())
+    assert all(str(d) == "String" for n, d in r.frame.schema.items() if n != "_src_line_no")
+
+
+def test_plugin_spi_end_to_end():
+    load_dir(ROOT / "plugins")
+    r = parse(PluginParser(ref="acme-positions"), (FIX / "acme_positions.txt").read_bytes())
+    assert r.frame["name"].to_list() == ["Abhishek", "Nilanjana"]
+    assert r.frame["amount"].to_list() == [125.0, 340.0]
+    assert r.report.parser == "plugin/acme-positions"
+
+
+def test_plugin_reject_and_trailer_contract():
+    load_dir(ROOT / "plugins")
+    r = parse(PluginParser(ref="acme-positions"), (FIX / "acme_positions.txt").read_bytes())
+    assert r.report.rows_rejected == 1
+    assert r.rejects.row(0, named=True)["_src_line_no"] == 4
+    # the trailer declares 3 records; we saw 2 good + 1 rejected
+    assert r.report.trailer_declared_rows == 3
+    assert r.report.rows_parsed + r.report.rows_rejected == 3
+
+
+def test_plugin_options_reach_the_plugin():
+    load_dir(ROOT / "plugins")
+    r = parse(
+        PluginParser(ref="acme-positions", options={"amount_scale": 1}),
+        (FIX / "acme_positions.txt").read_bytes(),
+    )
+    assert r.frame["amount"].to_list() == [12500.0, 34000.0]

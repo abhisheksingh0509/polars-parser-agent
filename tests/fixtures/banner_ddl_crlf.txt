@@ -1,0 +1,13 @@
+﻿*
+*
+*
+Header
+
+name string(100)
+age  int(10)
+*
+ABhishek,10
+ANkita,20,
+Nilanjana,30
+*
+END
