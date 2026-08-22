@@ -117,33 +117,24 @@ are pulling their weight or whether a fourth structure strategy is warranted.
 
 In the order I'd do it. Each is independent; none blocks Part 2.
 
-### 3.1 Partitioned tables
+### 3.1 Partitioned tables — **done**
 
-Currently commits are unpartitioned.
+`target.partition_by: [business_date]` gives the table an identity `PartitionSpec`
+in `sink.py`. Partition on the feed's business date, not ingest time — a re-load
+must land in the day it belongs to.
 
-- Add `target.partition_by` to `FeedSpec`.
-- In `io/sink.py`, create the table with a `PartitionSpec`.
-- **Test:** two business dates in one job produce two partitions and one snapshot.
+The partition-aware staging split this item used to call for turned out to be
+**unnecessary**: `staging.write` already emits one Parquet per member, and a
+member holds one business day, so every staged file maps to exactly one partition
+value for free. The invariant is per *file*, not per archive.
 
-Partition on the feed's **business date**, not on ingest time — a re-load must
-land in the day it belongs to, not the day you ran it. `msci-test` shows the
-shape: the parser emits a `business_date` column, either read from the file or
-supplied per run with `--option business_date=…`.
+Refusals are structured errors, not crashes: `partition_column_missing`,
+`partition_spec_conflict` (the table already holds data laid out differently — a
+load never re-lays-out an existing table), and `mixed_partition_file` (one member
+spans two values; `add_files` catches this itself).
 
-The staging split this item used to call for is **not needed** when an archive
-holds one business day, which is the common case here: `staging.write` already
-emits one Parquet per member, and every member of an archive shares one date, so
-a staged file maps to exactly one partition value for free. Add the split only
-for a feed that genuinely mixes days inside one archive.
-
-Watch for: a table already committed unpartitioned cannot simply grow a partition
-spec covering its existing files — prove this on a sandbox table. If `add_files`
-fights, fall back to single-threaded `table.append()` over the staged files; the
-staging boundary makes that a contained swap.
-
-Watch for: `add_files` is stricter about partitioned tables than unpartitioned
-ones. If it fights, fall back to single-threaded `table.append()` over the staged
-files — the staging boundary makes that a contained swap.
+Not done, and deliberately: partition transforms other than identity (`day`,
+`bucket`, `truncate`), and migrating a populated table onto a new spec.
 
 ### 3.2 Fixed-width as a built-in strategy
 

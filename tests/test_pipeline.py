@@ -279,3 +279,107 @@ def test_evolve_adds_columns_but_never_retypes_one():
         _unify("t", [narrow, retyped], evolve=True)
     assert caught.value.code == "schema_drift"
     assert "TYPE" in caught.value.message
+
+
+# --------------------------------------------------------------------------- #
+# partitioning: one archive is one business day
+# --------------------------------------------------------------------------- #
+
+
+def _day_zip(path: Path, day: str, ids: list[str]) -> Path:
+    """One archive, one business day, several members -- the real feed shape."""
+    with zipfile.ZipFile(path, "w") as z:
+        for n, ident in enumerate(ids):
+            z.writestr(
+                f"part_{n}.txt",
+                f"F|f{n}|{day}\nH|{day}|issue|id|name\nI|{ident}|N{ident}\nE|issue\n",
+            )
+    return path
+
+
+def partitioned(zip_path: Path, table: str, by=("business_date",), **policy):
+    spec = feed_for(zip_path, table, **policy)
+    spec.target.partition_by = list(by)
+    return spec
+
+
+def test_a_partitioned_table_gets_one_partition_per_day(tmp_path):
+    ws = tmp_path / "ws"
+    day1 = _day_zip(tmp_path / "d1.zip", "20260823", ["1", "2"])
+    day2 = _day_zip(tmp_path / "d2.zip", "20260824", ["3"])
+
+    first = run(partitioned(day1, "bronze.parts"), ws, plugin_dir=str(ROOT / "plugins"))
+    assert first.status == "ok", first.errors
+    second = run(partitioned(day2, "bronze.parts"), ws, plugin_dir=str(ROOT / "plugins"))
+    assert second.status == "ok", second.errors
+
+    table = sink.catalog(ws / "warehouse").load_table("bronze.parts")
+    assert [f.name for f in table.spec().fields] == ["business_date"]
+    # two days, three rows, and each job is still exactly one snapshot
+    assert len(table.scan().to_arrow()) == 3
+    assert len(table.metadata.snapshots) == 2
+
+    partitions = {f.file.partition[0] for f in table.scan().plan_files()}
+    assert len(partitions) == 2
+
+    pruned = table.scan(row_filter="business_date == '20260823'").to_arrow()
+    assert len(pruned) == 2
+
+
+def test_many_members_of_one_day_land_in_one_partition(tmp_path):
+    """The assumption that makes this cheap: no staging split needed."""
+    ws = tmp_path / "ws"
+    day = _day_zip(tmp_path / "d.zip", "20260823", [str(n) for n in range(6)])
+
+    result = run(partitioned(day, "bronze.oneday"), ws, plugin_dir=str(ROOT / "plugins"))
+    assert result.status == "ok", result.errors
+    assert result.commit["files"] == 6  # six members, six staged files
+
+    table = sink.catalog(ws / "warehouse").load_table("bronze.oneday")
+    assert len({f.file.partition[0] for f in table.scan().plan_files()}) == 1
+
+
+def test_partitioning_by_a_column_the_parser_does_not_emit_is_refused(tmp_path):
+    result = run(
+        partitioned(_day_zip(tmp_path / "d.zip", "20260823", ["1"]),
+                    "bronze.nocol", by=("no_such_column",)),
+        tmp_path / "ws", plugin_dir=str(ROOT / "plugins"),
+    )
+    assert result.status == "failed"
+    err = result.errors[0]
+    assert err["error"] == "partition_column_missing"
+    assert err["field"] == "target.partition_by"
+    assert "no_such_column" in err["observed"]["requested"]
+
+
+def test_an_existing_unpartitioned_table_is_not_silently_repartitioned(tmp_path):
+    """A load must not change the layout of a table that already holds data."""
+    ws = tmp_path / "ws"
+    flat = _day_zip(tmp_path / "d1.zip", "20260823", ["1"])
+    assert run(feed_for(flat, "bronze.wasflat"), ws,
+               plugin_dir=str(ROOT / "plugins")).status == "ok"
+
+    later = run(partitioned(_day_zip(tmp_path / "d2.zip", "20260824", ["2"]),
+                            "bronze.wasflat"),
+                ws, plugin_dir=str(ROOT / "plugins"))
+    assert later.status == "failed"
+    assert later.errors[0]["error"] == "partition_spec_conflict"
+    assert later.errors[0]["observed"]["table_partitioned_by"] == []
+    assert len(sink.scan(ws / "warehouse", "bronze.wasflat")) == 1  # untouched
+
+
+def test_rejects_are_not_partitioned(tmp_path, zip_of):
+    """A rejected row may have failed on the partition column itself."""
+    ws = tmp_path / "ws"
+    spec = feed_for(zip_of(4, bad=1), "bronze.rej", max_reject_ratio=0.5)
+    spec.target.partition_by = ["business_date"]
+
+    result = run(spec, ws, plugin_dir=str(ROOT / "plugins"))
+    assert result.status == "ok", result.errors
+    assert result.reject_commit["rows"] >= 1
+
+    cat = sink.catalog(ws / "warehouse")
+    assert [f.name for f in cat.load_table("bronze.rej").spec().fields] == [
+        "business_date"
+    ]
+    assert cat.load_table("bronze.rej_rejects").spec().fields == ()  # unpartitioned

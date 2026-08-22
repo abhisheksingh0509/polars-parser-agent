@@ -329,34 +329,52 @@ failure under `evolve`, with its own error — adding a column is safe, retyping
 one rewrites the meaning of data already committed. Do that deliberately, not as
 a side effect of a load.
 
-## Known gap — partitioning
+## Partitioning
 
-`FeedSpec.Target` accepts only `table`, and `sink.commit` calls
-`create_table_if_not_exists(identifier, schema)` with no `PartitionSpec`. Every
-commit appends to one flat table.
+`target.partition_by` takes column names and gives the table an identity
+partition spec:
 
-[`BUILD-PLAN.md` §3.1](BUILD-PLAN.md) scopes this as three pieces — a
-`target.partition_by` field, a partition-aware split in `staging.py`, and a
-`PartitionSpec` in `sink.py` — and calls the staging split the risky part,
-because `add_files` refuses a Parquet file spanning two partition values.
+```yaml
+target:
+  table: bronze.msci_test
+  partition_by: [business_date]
+```
 
-**Under one-zip-one-day, that split is unnecessary.** `staging.write` already
-emits one Parquet per member, every member of an archive shares one date, so each
-staged file maps to exactly one partition value for free. What remains is the
-easy two-thirds: add the field, and build the `PartitionSpec`. Partition on
-`business_date`, not `_ingested_at` — a re-load must land in the day it belongs
-to, not the day you ran it.
+Partition on the **business date, not `_ingested_at`** — a re-load must land in
+the day it belongs to, not the day you ran it.
 
-One ordering note: a table already committed unpartitioned cannot simply grow a
-partition spec that applies to its existing files. Do this on a sandbox table
-first.
+This is cheap here because of the feed's shape. `add_files` refuses a Parquet
+file spanning two partition values, so normally partitioning means splitting
+frames before staging. But staging already writes **one file per member**, and
+one archive is one business day, so every staged file holds exactly one date
+already. No split, no rewrite: `add_files` still just reads the footers.
 
-Before building on it, note the design tension: `promote_fields` already lifts a
-business date onto every row for `sectioned` feeds, and
-[`DESIGN.md` open question 5](DESIGN.md) asks whether that belongs in bronze at
-all, since it is a transform and bronze is meant to be source-faithful. Reading a
-date out of a comment line is the same argument in a different coat — worth
-settling once, for every feed, rather than per feed.
+The invariant that actually matters is **per file**, not per archive. An archive
+mixing days is fine as long as each member inside it is single-day — that is why
+the three-date sample archive still partitions correctly into three days.
+
+Three refusals, each a structured error rather than a crash:
+
+| Error | When | Fix |
+|---|---|---|
+| `partition_column_missing` | `partition_by` names a column the parser doesn't emit | name one it does — `dry-run` prints the schema |
+| `partition_spec_conflict` | the table already holds data laid out differently | a load never re-lays-out an existing table; write to a new one or migrate deliberately |
+| `mixed_partition_file` | one member spans two partition values | split the source, or partition on something constant within a member |
+
+The second is the one to expect: **adding `partition_by` to a feed that has
+already landed data will fail**, by design. Prove the change on a sandbox table
+(`--table sandbox.x --workspace ./_x`), then point it at a fresh production
+table.
+
+Two things that surprise people:
+
+- **No Hive-style directories appear.** `add_files` registers files where they
+  already sit and never moves them; partitioning is metadata. Pruning works
+  regardless — `table.scan(row_filter="business_date == '2026-08-23'")` reads
+  only the matching files.
+- **The reject table is deliberately not partitioned.** A rejected row may have
+  failed on the very column being partitioned on. Rejects are small and you
+  query them by `_job_id`.
 
 ## Step 9 — commit the feed
 

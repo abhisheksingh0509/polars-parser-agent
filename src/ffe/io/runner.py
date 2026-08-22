@@ -191,8 +191,12 @@ def run(
             spec.target.table,
             good_files,
             schema_change=spec.policy.schema_change,
+            partition_by=spec.target.partition_by,
         )
         if reject_files:
+            # Rejects are deliberately NOT partitioned: a rejected row may have
+            # failed on the very column being partitioned on, and the table is
+            # small and queried by _job_id anyway.
             result.reject_commit = sink.commit(
                 workspace / "warehouse",
                 f"{spec.target.table}_rejects",

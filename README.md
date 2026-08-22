@@ -136,6 +136,7 @@ parser:
     promote_fields: [business_date, file_id]
 target:
   table: bronze.issues
+  partition_by: [business_date]    # identity partitioning, by column name
 policy:
   max_reject_ratio: 0.01           # exceeded -> job fails, nothing commits
   schema_change: fail              # fail | evolve, when the feed grows a column
