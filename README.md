@@ -20,6 +20,7 @@ messy file to a queryable table.
 | [`notebooks/explore.ipynb`](notebooks/explore.ipynb) | seeing it work, interactively |
 | [`docs/DESIGN.md`](docs/DESIGN.md) | why it's built this way, plus measurements |
 | [`docs/BUILD-PLAN.md`](docs/BUILD-PLAN.md) | extending it, or migrating existing parsers |
+| [`.claude/commands/onboard-feed.md`](.claude/commands/onboard-feed.md) | onboarding a feed with Claude Code: `/onboard-feed <sample>` |
 | [`.github/copilot-instructions.md`](.github/copilot-instructions.md) | read automatically by Copilot / Claude Code |
 
 ---
@@ -91,6 +92,21 @@ uv run ffe run feeds/my-feed.yaml --table sandbox.my_test --source "C:/drops/*.z
 Every command emits JSON. Exit codes are part of the contract: **2** = your spec
 is wrong (fix and retry), **3** = the file is wrong (stop retrying), **1** = a
 bug in `ffe`.
+
+### Driving it with Claude Code
+
+That JSON, plus errors that name the field to change, is what makes the onboarding
+loop agent-drivable — so it ships as a slash command:
+
+```
+/onboard-feed trades.txt bronze.trades
+```
+
+It profiles the sample, copies the nearest spec, and iterates `dry-run` on the
+structured errors until `gates.passed`, then **stops for your approval** — `ffe run`
+is deliberately outside the command's allowed tools, so writing to the warehouse
+needs a human. Details and the reasoning are in
+[`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md#driving-this-with-claude).
 
 ### A feed spec
 

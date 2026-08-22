@@ -9,6 +9,7 @@ a test so it stays working.
 - [See it work first](#see-it-work-first) — on files already in the repo
 - [**Testing your own file**](#testing-your-own-file) — the six steps
 - [When your file needs actual code](#when-your-file-needs-actual-code)
+- [Driving this with Claude](#driving-this-with-claude) — `/onboard-feed`, and how the loop converges
 - [Reference](#reference) — commands, lineage columns, where things get saved
 
 ---
@@ -112,8 +113,12 @@ uv run --all-extras jupyter lab notebooks/explore.ipynb
 
 ## Testing your own file
 
-Six steps. Step 4 is a loop — expect to go round it a few times. That's the
-normal way to use this, not a sign you're doing it wrong.
+Six steps. Step 4 is a loop — expect to go round it a few times. That's the normal
+way to use this, not a sign you're doing it wrong.
+
+Claude Code can run this whole loop for you with one command
+([below](#driving-this-with-claude)). Read this section first anyway: it ends with
+you approving a table, and you can't approve what you can't judge.
 
 ### 1. Get a small sample
 
@@ -443,6 +448,96 @@ Two rules:
    row can't be traced back to its line.
 
 Then pick step 4 back up — everything from there is the same.
+
+---
+
+## Driving this with Claude
+
+Every command prints JSON, every error names the field to change, and the exit
+codes separate "your spec is wrong" from "the file is wrong". None of that is
+incidental — [`DESIGN.md`](DESIGN.md#designing-errors-for-a-model-reader) calls the
+error format *"the single highest-leverage decision in this whole document"*,
+because an agent's next action is decided entirely by what the last command
+printed. Which means step 4 is a loop something else can turn.
+
+### The command
+
+```
+/onboard-feed trades.txt bronze.trades
+```
+
+It lives in [`.claude/commands/onboard-feed.md`](../.claude/commands/onboard-feed.md)
+— checked in, reviewed like code, so everyone gets the same workflow. It walks the
+same six steps and stops where you'd want it to:
+
+```
+> /onboard-feed trades.txt
+
+  ⏺ uv run ffe profile trades.txt
+      structure_hint: record_tag, delimiter "|", tags E F H I
+  ⏺ Write feeds/trades.yaml            (copied from pipe-tagged-feed.yaml)
+  ⏺ uv run ffe lint feeds/trades.yaml                 → ok
+  ⏺ uv run ffe dry-run feeds/trades.yaml trades.txt   → exit 2
+      delimiter_mismatch · parser.data.delimiter · candidate "|"
+  ⏺ Edit feeds/trades.yaml             (delimiter "," → "|")
+  ⏺ uv run ffe dry-run feeds/trades.yaml trades.txt   → gates.passed
+
+  head(20), schema, and the spec diff — approve before I run `ffe run`?
+```
+
+### Why it converges instead of flailing
+
+Four properties, in the order they matter:
+
+1. **`profile` measures; the model only interprets.** Delimiters, line-width
+   histograms and position-0 token frequencies come from arithmetic. The only
+   interpretive leap is "position 0 is a record tag" — and it's handed the
+   measurements rather than asked to produce them.
+2. **The error *is* the prompt.** `field` says what to change, `candidates` gives
+   measured alternatives, `hint` spells out the edit. There's nothing left to
+   invent, which is why it usually takes one or two passes.
+3. **`blame` separates retry from stop.** `spec` means iterate; `file` means the
+   input is truncated or corrupt and no amount of retrying helps. Without that
+   split an agent will happily burn twenty turns on a broken file.
+4. **`dry-run` cannot write.** Not by convention — `ffe.core` has no I/O in it at
+   all. Iteration is free and side-effect-free, so there's no reason to be timid
+   about it.
+
+### What it deliberately won't do
+
+- **Run `ffe run` on its own.** That verb is *not* in the command's `allowed-tools`,
+  so it triggers a permission prompt — the approval gate is enforced by the
+  permission system rather than by asking the model nicely. Don't click through it
+  out of habit.
+- **Loosen `max_reject_ratio` to make a gate pass.** If rows are being rejected,
+  either the types are wrong or the file is broken; hiding it is neither.
+- **Cycle forever.** It stops after five dry-run attempts and reports what it tried
+  and where it got stuck.
+- **Write ingestion code.** Zip handling, Parquet, pyiceberg — all of it already
+  exists, and reaching for it means being in the wrong layer.
+
+### Without the command
+
+A plain sentence works too:
+
+```
+> onboard tests/fixtures/trades.txt as a feed into bronze.trades
+```
+
+[`CLAUDE.md`](../CLAUDE.md) points at
+[`.github/copilot-instructions.md`](../.github/copilot-instructions.md), which
+carries the workflow, the gate table, the plugin contract and the approval rule —
+so the contract is loaded whether or not you type a command name. The command just
+makes it explicit, repeatable, and reviewable.
+
+### Your half of the loop
+
+Claude can tell you `gates.passed` is true. It cannot tell you the feed is right.
+Only you know that `qty` should have been an integer, that a column named `entity`
+is really the desk code, or that 3% rejects is normal for this vendor on a Monday.
+So when it stops and shows you `head` — read the columns, check the dtypes, look at
+what got rejected. That's the step the tooling can't do for you, and it's why the
+command stops there instead of finishing the job.
 
 ---
 

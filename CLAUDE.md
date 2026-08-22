@@ -9,6 +9,17 @@ It is kept there rather than here because that path is picked up automatically b
 both Claude Code and GitHub Copilot. There is no separate Claude-specific
 guidance; nothing in that file is Copilot-specific.
 
+## Onboarding a feed
+
+`/onboard-feed <sample> [table]` runs the whole loop — profile, write the spec,
+iterate `dry-run` on the structured errors, then stop for a human to approve the
+DataFrame. It lives in
+[`.claude/commands/onboard-feed.md`](.claude/commands/onboard-feed.md) and
+sequences the workflow in the instructions above rather than restating it.
+
+`ffe run` is deliberately outside that command's `allowed-tools`: writing to the
+warehouse should cost a permission prompt.
+
 ## Platform
 
 This repo runs on **macOS**. Nothing here needs to work on Windows: Windows is
