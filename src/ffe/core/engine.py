@@ -331,6 +331,11 @@ def parse(
                 columns=_stats(result.frame, {}),
             )
         result.report.parser = f"plugin/{spec.ref}"
+        if not result.report.columns:
+            # A plugin builds its own ParseReport and rarely fills this in.
+            # Without it `all_null_columns` has nothing to check, so the gate
+            # silently passes for every plugin feed -- measure it here instead.
+            result.report.columns = _stats(result.frame, {})
     else:
         raise ValueError(f"unsupported parser kind: {spec!r}")
 

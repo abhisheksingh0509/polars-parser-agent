@@ -50,7 +50,7 @@ class JobResult:
 
 
 def _process(args) -> dict:
-    member, spec, staging_root, job_id, plugin_dir = args
+    member, spec, staging_root, job_id, plugin_dir, options = args
     if plugin_dir:
         plugins.load_dir(plugin_dir)
 
@@ -60,7 +60,9 @@ def _process(args) -> dict:
         result = parse(
             spec.parser,
             raw,
-            plugins.ParseContext(member=member.label, job_id=job_id),
+            plugins.ParseContext(
+                member=member.label, job_id=job_id, options=dict(options)
+            ),
         )
         spec_hash = spec.hash()
 
@@ -102,7 +104,14 @@ def run(
     workers: int | None = None,
     job_id: str | None = None,
     executor: str = "thread",
+    options: dict | None = None,
 ) -> JobResult:
+    """`options` is per-run parser input -- a business date, a cutoff, a mode.
+
+    It reaches a plugin as `ctx.options`, layered over `parser.options` from the
+    spec so a run can override the YAML without editing it. A plain dict, so the
+    payload stays picklable for `--executor process`.
+    """
     job_id = job_id or uuid.uuid4().hex[:12]
     workspace = Path(workspace)
     staging_root = workspace / "staging"
@@ -118,7 +127,10 @@ def run(
         return result
 
     n = workers or spec.policy.workers or min(8, (os.cpu_count() or 2))
-    payloads = [(m, spec, str(staging_root), job_id, plugin_dir) for m in members]
+    opts = dict(options or {})
+    payloads = [
+        (m, spec, str(staging_root), job_id, plugin_dir, opts) for m in members
+    ]
 
     # ---- step 2: parallel, isolated, nothing shared -----------------------
     # Executor choice is a real tradeoff, not a detail:

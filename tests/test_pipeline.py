@@ -141,3 +141,18 @@ def test_all_executors_give_identical_results(tmp_path, zip_of, executor):
     spec = feed_for(zip_of(6), f"bronze.t_{executor}")
     result = run(spec, tmp_path / executor, workers=4, executor=executor)
     assert result.rows == 12 and result.status == "ok"
+
+
+def test_run_options_reach_the_parser_and_stay_picklable(tmp_path, zip_of):
+    """Per-run options ride the worker payload, so they must survive spawn."""
+    import pickle
+
+    from ffe.core.plugins import ParseContext
+
+    opts = {"business_date": "2026-08-23"}
+    member = resolve(str(zip_of(1)), "*.txt")[0]
+    payload = (member, feed_for(zip_of(1), "bronze.x"), "s", "job", None, opts)
+    assert pickle.loads(pickle.dumps(payload))[5] == opts
+
+    # and the default is an empty dict, never None -- ctx.options is indexed
+    assert ParseContext().options == {}
