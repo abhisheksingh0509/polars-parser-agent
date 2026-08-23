@@ -39,8 +39,8 @@ of every command:
 
 ```bash
 uv run ffe <verb> …
-uv run pytest -q                    # 30 passed, 1 skipped
-uv run python scripts/smoke.py      # 19/19, smoke test OK
+uv run pytest -q                    # must be green
+uv run python scripts/smoke.py      # smoke test OK
 ```
 
 `uv.lock` is committed, so `uv sync` resolves identically every time. Don't hand

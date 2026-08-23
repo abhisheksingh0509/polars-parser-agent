@@ -571,11 +571,13 @@ polars-parser-agent/
 ├── feeds/                      # FeedSpec YAML -- versioned config
 │   ├── banner-ddl-feed.yaml    # worked example A
 │   ├── pipe-tagged-feed.yaml   # worked example B
+│   ├── acme-positions.yaml     # the plugin example
 │   └── msci-test.yaml          # the runbook's worked example
 ├── plugins/
-│   └── acme_positions.py       # fixed-width; the reference plugin
+│   ├── acme_positions.py       # fixed-width; the reference plugin
+│   └── msci_test.py            # mixed-delimiter; the runbook's feed
 └── tests/
-    ├── test_engine.py          # 12 tests: both examples, rejects, error payloads
+    ├── test_engine.py          # both examples, rejects, error payloads
     ├── test_native_and_plugins.py
     ├── test_pipeline.py        # zip fan-out, one snapshot, gates, ledger
     └── fixtures/               # every sample, pinned by a test
@@ -593,8 +595,8 @@ same interfaces.
 | Phase | Deliverable | State |
 |---|---|---|
 | **0** | Skeleton, `FeedSpec` models, both examples as fixtures | **done** |
-| **1** | Engine: native + sectioned + plugin SPI + `ParseReport` | **done** — 16 tests |
-| **2** | Source, zip fan-out, staging, ledger, `add_files` commit | **done** — 12 tests |
+| **1** | Engine: native + sectioned + plugin SPI + `ParseReport` | **done** |
+| **2** | Source, zip fan-out, staging, ledger, `add_files` commit | **done** |
 | **3** | Seven CLI verbs, JSON output, structured errors, `CLAUDE.md` | **done** |
 | **4** | Partitioned tables, schema evolution, fixed-width built-in | not started |
 | **5** | Docker Compose, MinIO, REST catalog, S3 sources | not started |

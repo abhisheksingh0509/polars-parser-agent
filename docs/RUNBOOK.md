@@ -45,8 +45,8 @@ you run it twice.
 uv run pytest -q
 ```
 
-Expect `30 passed, 1 skipped` plus your feed's generated test. The skip is the
-notebook test (`uv run --all-extras pytest -q` gives 32 passed). A red suite
+Expect a green suite, including your feed's generated test. Any skip is the
+notebook test (`uv run --all-extras pytest -q` runs it too). A red suite
 before you touch production data means you are debugging two things at once.
 
 ## Step 2 — point the spec at the real drop

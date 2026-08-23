@@ -200,5 +200,5 @@ uv run pytest -q                    # must be green before proposing anything
 uv run python scripts/smoke.py      # end-to-end: zip -> Iceberg -> read back
 ```
 
-`pytest` reports 30 passed and 1 skipped; the skip is the notebook test, which
-needs the extra dependencies (`uv run --all-extras pytest -q` gives 32 passed).
+Any skip is the notebook test, which needs the extra dependencies
+(`uv run --all-extras pytest -q` runs it too).

@@ -42,8 +42,8 @@ resolution is identical every time.
 uv is genuinely required, not a convenience: it is what supplies the interpreter.
 
 ```bash
-uv run pytest -q                    # expect: 30 passed, 1 skipped
-uv run python scripts/smoke.py      # expect: 19/19, "smoke test OK"
+uv run pytest -q                    # expect: green
+uv run python scripts/smoke.py      # expect: "smoke test OK"
 ```
 
 If either fails on a fresh clone, fix that before anything else — see
@@ -61,8 +61,8 @@ uv run --all-extras jupyter lab notebooks/explore.ipynb
 It's committed without saved outputs, so run it top to bottom — takes about 15
 seconds and cleans up after itself.
 
-`--all-extras` adds the notebook dependencies, which also un-skip the two tests
-that execute the notebook: `uv run --all-extras pytest -q` gives **32 passed**.
+`--all-extras` adds the notebook dependencies, which also un-skip the tests
+that execute the notebook: `uv run --all-extras pytest -q` runs them too.
 
 ---
 
