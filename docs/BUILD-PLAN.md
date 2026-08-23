@@ -28,15 +28,15 @@ Do this first and do not skip the verification. Everything else assumes it.
 
 ```bash
 uv sync --extra dev
-uv run pytest -q                    # expect: 30 passed, 1 skipped
-uv run python scripts/smoke.py      # expect: 19/19, "smoke test OK"
+uv run pytest -q                    # expect: green
+uv run python scripts/smoke.py      # expect: "smoke test OK"
 ```
 
 `uv sync` reads `requires-python` and installs Python 3.12 itself, so there is
-nothing to pick by hand. The skip is the notebook test —
-`uv run --all-extras pytest -q` runs it too and gives 32 passed.
+nothing to pick by hand. Any skip is the notebook test —
+`uv run --all-extras pytest -q` runs it too.
 
-**Exit criterion: 30 tests and 19 smoke checks pass.**
+**Exit criterion: the test suite and the smoke checks both pass.**
 
 If something fails, check [the traps in Part 5](#traps-that-have-already-cost-a-day)
 before debugging — every one of them is already handled here, so a reappearance is

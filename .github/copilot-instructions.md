@@ -121,7 +121,12 @@ class MyFeed(ParserPlugin):
   can't be traced back to its line.
 - Set `report.trailer_declared_rows` if the file declares a count.
 - Do **not** import anything from `ffe.io`. Plugins never touch storage.
-- Read tunables from `ctx.options`, not module constants.
+- Read the *shape* from `ctx.options`, not module constants — column names, field
+  and level counts, separators. Hardcode them and the next sender who renames a
+  column needs a second plugin for an identical format. Only what differs between
+  senders becomes config; the layout logic stays in code.
+- A malformed option is `ParseError(blame="spec")`, not a reject. Rejects are for
+  bad **data**. Bad rows still never raise.
 
 ## Migrating an existing in-house parser
 
@@ -195,5 +200,5 @@ uv run pytest -q                    # must be green before proposing anything
 uv run python scripts/smoke.py      # end-to-end: zip -> Iceberg -> read back
 ```
 
-`pytest` reports 30 passed and 1 skipped; the skip is the notebook test, which
-needs the extra dependencies (`uv run --all-extras pytest -q` gives 32 passed).
+Any skip is the notebook test, which needs the extra dependencies
+(`uv run --all-extras pytest -q` runs it too).

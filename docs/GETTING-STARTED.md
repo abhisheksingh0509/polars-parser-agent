@@ -57,7 +57,7 @@ That creates `.venv` and picks Python **3.12** for you — which matters, becaus
 3.13+ is ahead of the storage libraries' stable wheels.
 
 ```bash
-uv run pytest -q                    # 30 passed, 1 skipped
+uv run pytest -q                    # must be green
 uv run python scripts/smoke.py      # smoke test OK
 ```
 
