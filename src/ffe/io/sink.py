@@ -178,7 +178,7 @@ def commit(
                 f"values, which add_files cannot register: {exc}",
                 field="target.partition_by",
                 observed={"partition_by": partition_by or []},
-                hint="Staging writes one file per member, so this means a single "
+                hint="The write emits one file per member, so this means a single "
                 "member mixes partition values -- for a date, an archive holding "
                 "more than one business day. Either split the source, or "
                 "partition on something constant within a member.",

@@ -90,7 +90,7 @@ flowchart TB
     subgraph L1["Layer 1 · Ingest &amp; Sink"]
         direction LR
         C1["Source<br/>file · zip · dir · glob"] --> C2["Fan-out<br/>process pool"]
-        C2 --> C3["Staging<br/>parquet"] --> C4["Iceberg<br/>one commit"]
+        C2 --> C3["Data files<br/>parquet"] --> C4["Iceberg<br/>one commit"]
     end
 
     L3 -. "authors FeedSpec YAML" .-> L2
