@@ -1,4 +1,4 @@
-"""The plumbing: zip fan-out, staging, the single Iceberg commit, the gates."""
+"""The plumbing: zip fan-out, data files, the single Iceberg commit, the gates."""
 
 import zipfile
 from pathlib import Path
@@ -96,6 +96,11 @@ def test_reject_ratio_gate_commits_nothing(tmp_path, zip_of):
     assert result.errors[0]["error"] == "reject_ratio_exceeded"
     with pytest.raises(Exception):
         sink.scan(tmp_path / "ws" / "warehouse", "bronze.t_gate")
+
+    # ...and it does not leave its data files behind. They were written before
+    # the gate ran, and nothing can reference them, so the job drops them.
+    assert result.discarded > 0
+    assert not list((tmp_path / "ws" / "warehouse").rglob("*.parquet"))
 
 
 def test_rejects_get_their_own_table(tmp_path, zip_of):
@@ -327,13 +332,13 @@ def test_a_partitioned_table_gets_one_partition_per_day(tmp_path):
 
 
 def test_many_members_of_one_day_land_in_one_partition(tmp_path):
-    """The assumption that makes this cheap: no staging split needed."""
+    """The assumption that makes this cheap: no per-partition split needed."""
     ws = tmp_path / "ws"
     day = _day_zip(tmp_path / "d.zip", "20260823", [str(n) for n in range(6)])
 
     result = run(partitioned(day, "bronze.oneday"), ws, plugin_dir=str(ROOT / "plugins"))
     assert result.status == "ok", result.errors
-    assert result.commit["files"] == 6  # six members, six staged files
+    assert result.commit["files"] == 6  # six members, six data files
 
     table = sink.catalog(ws / "warehouse").load_table("bronze.oneday")
     assert len({f.file.partition[0] for f in table.scan().plan_files()}) == 1
@@ -383,3 +388,40 @@ def test_rejects_are_not_partitioned(tmp_path, zip_of):
         "business_date"
     ]
     assert cat.load_table("bronze.rej_rejects").spec().fields == ()  # unpartitioned
+
+
+def test_data_files_live_beside_the_table_metadata(tmp_path, zip_of):
+    """Data files are not scratch: `add_files` registers them where they lie, so
+    they must sit under the table that owns them, next to its metadata."""
+    run(feed_for(zip_of(3), "bronze.t_layout"), tmp_path / "ws", workers=2)
+    table_dir = tmp_path / "ws" / "warehouse" / "bronze" / "t_layout"
+
+    written = sorted(p.relative_to(table_dir).parts[0] for p in table_dir.rglob("*")
+                     if p.is_file())
+    assert set(written) == {"data", "metadata"}, written
+
+    # every registered path resolves to a real file inside this table's data/
+    t = sink.catalog(tmp_path / "ws" / "warehouse").load_table("bronze.t_layout")
+    paths = [Path(tsk.file.file_path.replace("file://", "")) for tsk in t.scan().plan_files()]
+    assert paths, "no data files registered"
+    for f in paths:
+        assert f.is_file(), f"registered but missing: {f}"
+        assert (table_dir / "data") in f.parents
+
+
+def test_a_failed_job_leaves_no_orphan_data_files(tmp_path, zip_of):
+    """The invariant: everything under a table's data/ is either registered in a
+    snapshot or being written right now. A gate failure must not add a third
+    category -- unreferenced files nobody knows to clean up."""
+    ws = tmp_path / "ws"
+    run(feed_for(zip_of(3), "bronze.t_keep"), ws, workers=2)          # commits
+    good = sorted((ws / "warehouse").rglob("*.parquet"))
+    assert good, "first job should have committed data files"
+
+    spec = feed_for(zip_of(1, bad=3), "bronze.t_drop", max_reject_ratio=0.01)
+    result = run(spec, ws, workers=2)                                 # fails a gate
+
+    assert result.status == "failed" and result.commit == {}
+    assert result.discarded > 0
+    # the committed job's files are untouched, the failed job's are gone
+    assert sorted((ws / "warehouse").rglob("*.parquet")) == good
