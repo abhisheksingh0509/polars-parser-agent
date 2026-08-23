@@ -564,10 +564,18 @@ Everything lives under `_ffe/`, or wherever `--workspace` points:
 
 ```
 _ffe/
-├── staging/     one temporary Parquet file per input file. Safe to delete.
-├── warehouse/   the Iceberg tables. This is the real output.
+├── warehouse/   the Iceberg tables — this is the real output
+│   └── <ns>/<table>/
+│       ├── data/       one Parquet per input file. NOT temporary: the commit
+│       │               registers these in place, so they are the table's rows
+│       └── metadata/   snapshots and manifests, written by pyiceberg
 └── ledger.db    history: every run, every file, how it went
 ```
+
+Nothing under `warehouse/` is scratch. A job's Parquet is registered where it
+lies rather than copied, so deleting a data file removes rows from the table —
+the metadata will still point at it. A job that fails a gate cleans up after
+itself, so what remains is only ever live data.
 
 To read a table in Python:
 
