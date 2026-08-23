@@ -558,6 +558,54 @@ Added to every row, so you never have to wonder where a value came from:
 `_src_line_no` is the one you'll be glad of. When someone asks "where did this
 strange value come from?", you can point at the exact line.
 
+### What actually happens when you run it
+
+Worth knowing, because it explains why the files end up where they do.
+
+**1. It reads the list of what's in your zip — not the contents.** A zip has an
+index at the end, like a table of contents. That's all it opens at this point, so
+pointing at a 2 GB archive costs nothing until there's real work to do.
+
+**2. Each file inside the zip gets its own worker, running at the same time.**
+Every worker opens its *own* copy of the zip. That looks wasteful and isn't: a
+single shared zip handle remembers where it last read from, so two workers
+sharing one would keep yanking each other's place in the file.
+
+**3. Each worker writes its own Parquet file.** One input file in, one Parquet
+out, under the table it belongs to. No worker writes to the same place as any
+other, so nothing has to take turns or wait for a lock.
+
+**4. Once every worker is done, the checks run** — the same gates you saw in
+dry-run, but now across all the files at once. Some things can only be checked
+here: whether every file agrees on its columns, for instance, is a question about
+the whole set, not about any one file.
+
+**5. If a check fails, the Parquet is deleted and nothing is recorded.** The job
+exits `3` with an empty `commit`. You get nothing rather than most of a broken
+load, which is the point.
+
+**6. If the checks pass, one final step tells Iceberg those files are now part of
+the table.** Just one, single-threaded, at the very end.
+
+That last step is the part people expect to be slow, and isn't. It does **not**
+copy or rewrite your data. It opens the end of each Parquet file, where Parquet
+keeps a small summary — how many rows, the smallest and largest value per column
+— writes that summary into a list, and points the table at the new list. Your
+files stay exactly where the workers wrote them.
+
+Two things follow from that, and both are the reason it's built this way:
+
+- **It's all-or-nothing.** Adding to that list is one atomic operation, so either
+  every file from your run is in the table or none of it is. There's no state
+  where half a drop has landed.
+- **The Parquet files *are* the table.** They were never a temporary copy on the
+  way somewhere else. That's why they live inside `warehouse/`, and why deleting
+  one takes rows out of your table — see below.
+
+Only that final step ever talks to Iceberg. Because it's the only writer, and
+it runs once, there's never a question of two things committing at the same time
+and having to sort out who won.
+
 ### Where things get saved
 
 Everything lives under `_ffe/`, or wherever `--workspace` points:

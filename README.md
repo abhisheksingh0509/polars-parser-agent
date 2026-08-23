@@ -187,6 +187,9 @@ example of the extension path.
    snapshot. No data is rewritten; Iceberg reads the Parquet footers for stats —
    so a worker's output *is* the table's data, not a temporary copy of it.
 
+Same thing without the jargon, step by step, is in
+[`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md#what-actually-happens-when-you-run-it).
+
 Default executor is `thread`. Measured on an M-series Mac: parsing runs at ~5M
 rows/s single-threaded, so at small volumes a process pool costs more to start
 than it saves — processes lost every benchmark. Use `--executor process` only
