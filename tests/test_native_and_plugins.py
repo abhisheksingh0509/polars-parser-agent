@@ -2,8 +2,11 @@
 
 from pathlib import Path
 
+import pytest
+
 from ffe.core.engine import parse
 from ffe.core.plugins import load_dir
+from ffe.core.report import ParseError
 from ffe.core.spec import Coerce, NativeParser, PluginParser
 
 ROOT = Path(__file__).parent.parent
@@ -50,3 +53,38 @@ def test_plugin_options_reach_the_plugin():
         (FIX / "acme_positions.txt").read_bytes(),
     )
     assert r.frame["amount"].to_list() == [12500.0, 34000.0]
+
+
+def test_plugin_shape_comes_from_the_spec_not_the_code():
+    """Same bytes, renamed columns, no code change -- the field table is config.
+    Pins the plugin-contract rule: hardcoding it would need a second plugin."""
+    load_dir(ROOT / "plugins")
+    r = parse(
+        PluginParser(ref="acme-positions", options={
+            "fields": [["Position_Id", 1, 4, "int"], ["Holder", 4, 24, "str"]],
+        }),
+        (FIX / "acme_positions.txt").read_bytes(),
+    )
+    assert r.frame.columns == ["Position_Id", "Holder", "_src_line_no"]
+    assert r.frame["Holder"].to_list() == ["Abhishek", "Nilanjana", "BADAMOUNT"]
+    assert str(r.frame.schema["Position_Id"]) == "Int64"
+
+
+def test_plugin_rejects_hold_the_original_value_not_a_cast_one():
+    load_dir(ROOT / "plugins")
+    r = parse(PluginParser(ref="acme-positions"), (FIX / "acme_positions.txt").read_bytes())
+    bad = r.rejects.row(0, named=True)
+    assert bad["amount"] == "00000ABCDE"  # the raw slice, not a partial cast
+    assert bad["id"] == "003"
+    assert "00000ABCDE" in bad["_reject_reason"]
+
+
+def test_plugin_bad_option_is_blamed_on_the_spec():
+    load_dir(ROOT / "plugins")
+    with pytest.raises(ParseError) as caught:
+        parse(
+            PluginParser(ref="acme-positions", options={"fields": [["id", 4, 1, "int"]]}),
+            (FIX / "acme_positions.txt").read_bytes(),
+        )
+    assert caught.value.blame == "spec"
+    assert caught.value.field == "parser.options.fields"
