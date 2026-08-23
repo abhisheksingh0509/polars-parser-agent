@@ -70,7 +70,7 @@ def main() -> int:
         check("job succeeded", result.status == "ok", result.status)
         check("all 20 members parsed", result.members_ok == 20, str(result.members_ok))
         check("60 rows landed", result.rows == 60, str(result.rows))
-        check("20 staged files", result.commit.get("files") == 20, str(result.commit))
+        check("20 data files", result.commit.get("files") == 20, str(result.commit))
         check("ONE snapshot", result.commit.get("snapshot_id") is not None)
 
         print("\n2. read it back out of Iceberg")

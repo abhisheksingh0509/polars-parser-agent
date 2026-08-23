@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE TABLE IF NOT EXISTS members (
   job_id TEXT, member TEXT, status TEXT, parser TEXT,
   rows_parsed INTEGER, rows_rejected INTEGER, ragged INTEGER,
-  staged TEXT, duration_ms INTEGER, error TEXT,
+  data_file TEXT, duration_ms INTEGER, error TEXT,
   PRIMARY KEY (job_id, member)
 );
 """
@@ -45,7 +45,7 @@ class Ledger:
     def member(self, job_id: str, rec: dict) -> None:
         self.conn.execute(
             "INSERT OR REPLACE INTO members (job_id, member, status, parser, "
-            "rows_parsed, rows_rejected, ragged, staged, duration_ms, error) "
+            "rows_parsed, rows_rejected, ragged, data_file, duration_ms, error) "
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (
                 job_id,
@@ -55,7 +55,7 @@ class Ledger:
                 rec.get("rows_parsed", 0),
                 rec.get("rows_rejected", 0),
                 rec.get("ragged", 0),
-                rec.get("staged"),
+                rec.get("data_file"),
                 rec.get("duration_ms", 0),
                 json.dumps(rec["error"]) if rec.get("error") else None,
             ),

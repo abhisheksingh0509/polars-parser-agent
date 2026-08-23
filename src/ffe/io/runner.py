@@ -1,10 +1,12 @@
 """Parallel across files, sequential within a file, single at the finish line.
 
   1. list what's inside (nothing read yet)
-  2. N workers, each parsing its own member onto its own scrap paper
-  3. one commit at the end
+  2. N workers, each parsing its own member into its own data file
+  3. one commit at the end, which registers those files as they lie
 
 No worker ever touches Iceberg. That is what makes the commit conflict-free.
+A worker's output is not scratch -- `add_files` never rewrites it, so the file
+it writes is the file the table reads. See `datafiles`.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from ..core import plugins
 from ..core.engine import parse
 from ..core.report import ParseError
 from ..core.spec import FeedSpec
-from . import sink, staging
+from . import datafiles, sink
 from .ledger import Ledger
 from .source import Member, resolve
 
@@ -35,6 +37,7 @@ class JobResult:
     rejects: int = 0
     reject_ratio: float = 0.0
     status: str = "ok"
+    discarded: int = 0
     commit: dict = field(default_factory=dict)
     reject_commit: dict = field(default_factory=dict)
     errors: list[dict] = field(default_factory=list)
@@ -50,7 +53,7 @@ class JobResult:
 
 
 def _process(args) -> dict:
-    member, spec, staging_root, job_id, plugin_dir, options = args
+    member, spec, warehouse, job_id, plugin_dir, options = args
     if plugin_dir:
         plugins.load_dir(plugin_dir)
 
@@ -66,13 +69,15 @@ def _process(args) -> dict:
         )
         spec_hash = spec.hash()
 
-        good = staging.add_lineage(result.frame, member.label, job_id, spec_hash)
-        rec["staged"] = staging.write(good, Path(staging_root), job_id, "good", member.label)
+        good = datafiles.add_lineage(result.frame, member.label, job_id, spec_hash)
+        rec["data_file"] = datafiles.write(
+            good, Path(warehouse), spec.target.table, job_id, member.label
+        )
 
         if result.rejects is not None and len(result.rejects):
-            bad = staging.add_lineage(result.rejects, member.label, job_id, spec_hash)
-            rec["staged_rejects"] = staging.write(
-                bad, Path(staging_root), job_id, "reject", member.label
+            bad = datafiles.add_lineage(result.rejects, member.label, job_id, spec_hash)
+            rec["reject_data_file"] = datafiles.write(
+                bad, Path(warehouse), f"{spec.target.table}_rejects", job_id, member.label
             )
 
         rep = result.report
@@ -114,7 +119,7 @@ def run(
     """
     job_id = job_id or uuid.uuid4().hex[:12]
     workspace = Path(workspace)
-    staging_root = workspace / "staging"
+    warehouse = workspace / "warehouse"
     ledger = Ledger(workspace / "ledger.db")
 
     members: list[Member] = resolve(spec.source.pattern, spec.source.members)
@@ -129,10 +134,10 @@ def run(
     n = workers or spec.policy.workers or min(8, (os.cpu_count() or 2))
     opts = dict(options or {})
     payloads = [
-        (m, spec, str(staging_root), job_id, plugin_dir, opts) for m in members
+        (m, spec, str(warehouse), job_id, plugin_dir, opts) for m in members
     ]
 
-    # ---- step 2: parallel, isolated, nothing shared -----------------------
+    # ---- step 2: parallel, isolated, one data file each -------------------
     # Executor choice is a real tradeoff, not a detail:
     #   serial  - fewest surprises; fastest when members are small
     #   thread  - no spawn cost; Polars releases the GIL for its own work
@@ -151,9 +156,9 @@ def run(
             result.members_ok += 1
             result.rows += rec.get("rows_parsed", 0)
             result.rejects += rec.get("rows_rejected", 0)
-            good_files.append(rec["staged"])
-            if rec.get("staged_rejects"):
-                reject_files.append(rec["staged_rejects"])
+            good_files.append(rec["data_file"])
+            if rec.get("reject_data_file"):
+                reject_files.append(rec["reject_data_file"])
         else:
             result.failed += 1
             result.errors.append({"member": rec["member"], **rec["error"]})
@@ -169,11 +174,15 @@ def run(
             f"max_reject_ratio {spec.policy.max_reject_ratio}; nothing committed"
         )
         result.errors.append({"error": "reject_ratio_exceeded", "message": msg})
+        # Nothing was committed, so these files are unreachable. Drop them here
+        # rather than leaving them in the table's data/ for someone to find.
+        result.discarded = datafiles.discard(good_files + reject_files)
         ledger.finish(job_id, "failed", result.rows, result.rejects, error=msg)
         return result
 
     if result.failed and spec.policy.on_reject == "fail":
         result.status = "failed"
+        result.discarded = datafiles.discard(good_files + reject_files)
         ledger.finish(
             job_id, "failed", result.rows, result.rejects,
             error=f"{result.failed} member(s) failed to parse; nothing committed",
@@ -182,12 +191,12 @@ def run(
 
     # ---- step 3: one writer, one snapshot --------------------------------
     # Schema drift surfaces here rather than in a worker, because it is a
-    # property of the SET of staged files, not of any one member. It is a
+    # property of the SET of data files, not of any one member. It is a
     # policy decision with a structured error, so it fails the job cleanly
     # instead of escaping as an unhandled crash.
     try:
         result.commit = sink.commit(
-            workspace / "warehouse",
+            warehouse,
             spec.target.table,
             good_files,
             schema_change=spec.policy.schema_change,
@@ -198,7 +207,7 @@ def run(
             # failed on the very column being partitioned on, and the table is
             # small and queried by _job_id anyway.
             result.reject_commit = sink.commit(
-                workspace / "warehouse",
+                warehouse,
                 f"{spec.target.table}_rejects",
                 reject_files,
                 schema_change=spec.policy.schema_change,

@@ -1,8 +1,9 @@
 """The Iceberg commit. One writer, one snapshot, no data rewritten.
 
-Workers wrote Parquet in parallel. This runs single-threaded at the end and
-registers those files with `add_files`, which reads the Parquet footers for
-statistics rather than copying any rows.
+Workers wrote the table's data files in parallel. This runs single-threaded at
+the end and registers them with `add_files`, which reads their Parquet footers
+for statistics rather than copying any rows -- so those files, where they lie,
+become the table. See `datafiles` for what that means for their lifetime.
 """
 
 from __future__ import annotations
@@ -55,7 +56,7 @@ def _drift(table_name: str, message: str, observed: dict) -> ParseError:
 
 
 def _unify(table_name: str, schemas: list[pa.Schema], evolve: bool) -> pa.Schema:
-    """One arrow schema for a set of staged files, or a structured refusal."""
+    """One arrow schema for a set of data files, or a structured refusal."""
     distinct = list({s: None for s in schemas})
     if len(distinct) == 1:
         return distinct[0]
@@ -67,7 +68,7 @@ def _unify(table_name: str, schemas: list[pa.Schema], evolve: bool) -> pa.Schema
     if not evolve:
         raise _drift(
             table_name,
-            f"staged files do not share one schema ({len(distinct)} distinct). "
+            f"the job's data files do not share one schema ({len(distinct)} distinct). "
             f"Columns missing from at least one file: {added or 'none -- types differ'}",
             observed,
         )
@@ -79,7 +80,7 @@ def _unify(table_name: str, schemas: list[pa.Schema], evolve: bool) -> pa.Schema
     except pa.ArrowException as exc:  # ArrowTypeError on a conflict, not ArrowInvalid
         raise _drift(
             table_name,
-            f"staged files disagree on a column TYPE, which evolution will not "
+            f"data files disagree on a column TYPE, which evolution will not "
             f"resolve: {exc}",
             observed,
         ) from exc
@@ -137,7 +138,7 @@ def commit(
     schema_change: str = "fail",
     partition_by: list[str] | None = None,
 ) -> dict:
-    """Register staged Parquet into an Iceberg table as a single snapshot."""
+    """Register a job's data files into an Iceberg table as a single snapshot."""
     if not parquet_paths:
         return {"table": table_name, "files": 0, "snapshot_id": None, "rows": 0}
 
@@ -173,11 +174,11 @@ def commit(
         if "more than one partition value" in str(exc):
             raise ParseError(
                 code="mixed_partition_file",
-                message=f"{table_name}: one staged file spans several partition "
+                message=f"{table_name}: one data file spans several partition "
                 f"values, which add_files cannot register: {exc}",
                 field="target.partition_by",
                 observed={"partition_by": partition_by or []},
-                hint="Staging writes one file per member, so this means a single "
+                hint="The write emits one file per member, so this means a single "
                 "member mixes partition values -- for a date, an archive holding "
                 "more than one business day. Either split the source, or "
                 "partition on something constant within a member.",
@@ -187,7 +188,7 @@ def commit(
             raise
         raise _drift(
             table_name,
-            f"staged files carry columns the existing table does not have: {exc}",
+            f"the job's data files carry columns the existing table does not have: {exc}",
             {"table_columns": [f.name for f in table.schema().fields]},
         ) from exc
     table.refresh()

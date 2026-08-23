@@ -123,9 +123,9 @@ In the order I'd do it. Each is independent; none blocks Part 2.
 in `sink.py`. Partition on the feed's business date, not ingest time — a re-load
 must land in the day it belongs to.
 
-The partition-aware staging split this item used to call for turned out to be
-**unnecessary**: `staging.write` already emits one Parquet per member, and a
-member holds one business day, so every staged file maps to exactly one partition
+The partition-aware write split this item used to call for turned out to be
+**unnecessary**: `datafiles.write` already emits one Parquet per member, and a
+member holds one business day, so every data file maps to exactly one partition
 value for free. The invariant is per *file*, not per archive.
 
 Refusals are structured errors, not crashes: `partition_column_missing`,
@@ -150,7 +150,7 @@ working reference; promote it.
 ### 3.3 Schema-drift policy — **done**
 
 `policy.schema_change: fail | evolve`, default `fail`. On `evolve`, `sink.py`
-unifies the staged schemas and calls `union_by_name` on the table before
+unifies the data-file schemas and calls `union_by_name` on the table before
 `add_files`, which adds nullable columns only; a changed column *type* is still
 a hard failure. Catches drift within one job and across jobs, and fails as a
 structured `schema_drift` error (`blame: spec`) rather than an unhandled crash.
@@ -257,7 +257,7 @@ Each step is testable alone, and depends only on what came before it.
 | 8 | `core/plugins.py` | `@register`, `ParserPlugin`, `load_dir` | 2 |
 | 9 | `core/profile.py` | deterministic profile + `structure_hint`. No model. | — |
 | 10 | `io/source.py` | `pattern -> [Member]`. **`Member` must pickle** — paths, never handles. | — |
-| 11 | `io/staging.py` | Parquet write + lineage columns | — |
+| 11 | `io/datafiles.py` | Parquet write + lineage columns | — |
 | 12 | `io/ledger.py` | SQLite job/member history | — |
 | 13 | `io/sink.py` | `add_files` commit. Paths via `as_posix()`/`as_uri()`. | 11 |
 | 14 | `io/runner.py` | fan out, apply gates, then **one** commit. `_process` module level. | 7, 10–13 |

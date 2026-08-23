@@ -199,7 +199,7 @@ def new_parser(ref: str):
 @app.command()
 def run(
     spec: Path,
-    workspace: Path = typer.Option(Path("./_ffe"), help="staging, ledger, warehouse"),
+    workspace: Path = typer.Option(Path("./_ffe"), help="warehouse (data + metadata), ledger"),
     table: Optional[str] = typer.Option(
         None, help="override target.table, e.g. sandbox.my_test"
     ),

@@ -3,7 +3,7 @@
 **Status:** v3 — prototype built and passing · **Date:** 2026-08-22 · **Owner:** Abhishek Singh
 
 A framework for landing bespoke flat-file feeds in Iceberg. Engineers write only the
-parse logic for their file; the framework owns source resolution, parallelism, staging,
+parse logic for their file; the framework owns source resolution, parallelism, data files,
 the Iceberg commit, rejects, and lineage.
 
 ---
@@ -18,7 +18,7 @@ unavoidable and honestly fine — it's ten minutes of work and the person who kn
 should own it.
 
 What isn't fine is that every one of those parsers currently re-invents zip handling,
-parallelism, staging, the Iceberg write, reject routing, and lineage columns. That's the
+parallelism, the Parquet write, the Iceberg commit, reject routing, and lineage columns. That's the
 90% that's identical every time, and it's where the bugs live.
 
 So the contract is deliberately small:
@@ -54,7 +54,7 @@ See [Tool surface](#layer-3--tool-surface-for-agents).
 ## Scope
 
 **In:** flat files (text, delimited, fixed-width, sectioned); single files, archives,
-directories, globs; parallel processing across archive members; staging Parquet; a single
+directories, globs; parallel processing across archive members; writing Parquet; a single
 atomic Iceberg commit per job; reject capture; lineage; a job ledger.
 
 **Explicitly out** — each of these is a deliberate cut, not an oversight:
@@ -67,7 +67,7 @@ atomic Iceberg commit per job; reject capture; lineage; a job ledger.
 | Streaming a single huge member | Every member is assumed to fit in memory. True for "2 GB zip of many smaller files". | chunked framer, block state across boundaries — roughly doubles parser complexity |
 | Our own agent runtime | Superseded by the tool surface. Any coding agent is a client. | — |
 | Generated parser code | If the declarative spec can't express a file, a human (or their agent, in their editor) writes the plugin. | — |
-| Partitioned Iceberg tables | Prototype commits unpartitioned. `add_files` on a partitioned table needs partition-aware staging splits. | contained: staging + sink only |
+| Partitioned Iceberg tables | Prototype commits unpartitioned. `add_files` on a partitioned table needs partition-aware write splits. | contained: datafiles + sink only |
 
 ---
 
@@ -90,7 +90,7 @@ flowchart TB
     subgraph L1["Layer 1 · Ingest &amp; Sink"]
         direction LR
         C1["Source<br/>file · zip · dir · glob"] --> C2["Fan-out<br/>process pool"]
-        C2 --> C3["Staging<br/>parquet"] --> C4["Iceberg<br/>one commit"]
+        C2 --> C3["Data files<br/>parquet"] --> C4["Iceberg<br/>one commit"]
     end
 
     L3 -. "authors FeedSpec YAML" .-> L2
@@ -102,7 +102,7 @@ Two subpackages and a CLI. No AI dependency anywhere in the install.
 | Package | Depends on |
 |---|---|
 | `ffe.core` — parsers, spec models, report | polars, pydantic |
-| `ffe.io` — source, runner, staging, ledger, sink | `ffe.core`, pyarrow, pyiceberg |
+| `ffe.io` — source, runner, datafiles, ledger, sink | `ffe.core`, pyarrow, pyiceberg |
 | `ffe.cli` — the agent-facing surface | both, typer |
 
 The rule that matters: **`ffe.core` has no I/O and no config discovery.** `parse(spec, bytes)`
@@ -217,7 +217,7 @@ class AcmePositions(ParserPlugin):
 configured directory and from `ffe.parsers` entry points.
 
 What a plugin author gets for free, and must not implement: zip member resolution,
-parallelism, staging writes, Arrow schema alignment, the Iceberg commit, lineage columns,
+parallelism, the Parquet write, Arrow schema alignment, the Iceberg commit, lineage columns,
 ledger rows, retries. What they must provide: a DataFrame, optionally a reject frame, and
 row counts.
 
@@ -406,25 +406,31 @@ are followed to a bounded depth, default 1.
 ### Parallel fan-out, single commit
 
 `ProcessPoolExecutor` over members. Each worker parses independently and writes
-`staging/{job_id}/{dataset}/part-{idx}.parquet` plus a reject sibling. **No worker touches
-Iceberg.** When all workers finish, one single-threaded commit groups staged files by target
-table and calls `table.add_files([...])` once per table.
+`<warehouse>/<ns>/<table>/data/{job_id}/{member}.parquet`, with rejects going to the
+`_rejects` table's own directory. **No worker touches Iceberg.** When all workers finish,
+one single-threaded commit calls `table.add_files([...])` once per table.
 
 `add_files` registers existing Parquet without rewriting it — it reads the footers for
 statistics. One snapshot per job, no concurrent commits, no retry storms.
 
-Three constraints fall out, all handled at staging-write time rather than discovered in
+Because nothing is rewritten, a worker's file *is* the table's data file, which is why it
+is written into the table's own `data/` rather than a scratch directory. The invariant:
+**every file under a table's `data/` is either registered in a snapshot or being written
+right now.** A job that fails a gate discards what it wrote before returning — safe
+because the commit has not run, so nothing can reference it.
+
+Three constraints fall out, all handled at write time rather than discovered in
 production:
 
-1. **One staged file → exactly one partition.** Partitioning on `_ingest_date` satisfies
+1. **One data file → exactly one partition.** Partitioning on `_ingest_date` satisfies
    this naturally, since a job is one ingest date.
 2. **Parquet schema must match the Iceberg schema.** Cast to an Arrow schema derived from
-   the *live* Iceberg table before writing staging — not after.
+   the *live* Iceberg table before writing — not after.
 3. **New columns are a decision, not an accident.** `policy.schema_change: fail` by default.
 
 Fallback if `add_files` proves sharp-edged: single-threaded `table.append()` over the same
-staged files. Slower, but the staging boundary makes it a contained swap — as does
-replacing the commit step with Spark, Daft, or DuckDB. **Iceberg stays at the boundary;
+files. Slower, but keeping Iceberg at the commit boundary makes it a contained swap — as
+does replacing the commit step with Spark, Daft, or DuckDB. **Iceberg stays at the boundary;
 everything upstream is Parquet.** Deliberate insulation against pyiceberg's write-path
 maturity.
 
@@ -433,7 +439,7 @@ maturity.
 | Layer | Store | Contents |
 |---|---|---|
 | **L0 landing** | object store | archives byte-identical, immutable — enables replay |
-| **L1 staging** | Parquet | per-member good + reject, with the resolved spec and report as sidecars |
+| **L1 data files** | Parquet | per-member good + reject, registered in place by the commit |
 | **L2 bronze** | Iceberg | append-only, source-faithful types, partitioned by `_ingest_date` |
 | **rejects** | Iceberg | its own table, same rigour — not a log file |
 
@@ -442,7 +448,7 @@ No silver. Downstream is dbt's problem.
 ### Job ledger
 
 SQLite locally, Postgres later. One row per `(job_id, member)`: status, parser, spec hash,
-staged path, rows in / parsed / rejected, duration, error. This is what makes idempotent
+data file path, rows in / parsed / rejected, duration, error. This is what makes idempotent
 retries and "did file X land?" answerable. Not optional.
 
 ### ParseReport
@@ -563,7 +569,7 @@ polars-parser-agent/
 │   ├── io/
 │   │   ├── source.py           # file | zip | dir | glob -> Member
 │   │   ├── runner.py           # fan-out, gates, then one commit
-│   │   ├── staging.py          # parquet + lineage columns
+│   │   ├── datafiles.py        # parquet write + lineage columns
 │   │   ├── sink.py             # Iceberg add_files
 │   │   └── ledger.py           # sqlite job/member history
 │   ├── scaffold.py             # ffe new-parser
@@ -596,7 +602,7 @@ same interfaces.
 |---|---|---|
 | **0** | Skeleton, `FeedSpec` models, both examples as fixtures | **done** |
 | **1** | Engine: native + sectioned + plugin SPI + `ParseReport` | **done** |
-| **2** | Source, zip fan-out, staging, ledger, `add_files` commit | **done** |
+| **2** | Source, zip fan-out, data files, ledger, `add_files` commit | **done** |
 | **3** | Seven CLI verbs, JSON output, structured errors, `CLAUDE.md` | **done** |
 | **4** | Partitioned tables, schema evolution, fixed-width built-in | not started |
 | **5** | Docker Compose, MinIO, REST catalog, S3 sources | not started |
@@ -608,10 +614,10 @@ refuses to commit a feed with 20% bad rows; all three executors produce identica
 What the prototype deliberately does *not* do yet, in the order I would add it:
 
 1. **Partitioned tables.** Commits are unpartitioned. Partitioning on `_ingest_date` needs
-   partition-aware staging splits so one file maps to one partition.
+   partition-aware write splits so one file maps to one partition.
 2. **Fixed-width as a built-in.** Currently a plugin. Real reference data will want it
    declaratively, and it is the obvious third structure strategy.
-3. **Schema drift detection.** `add_files` refuses mismatched staged schemas with a clear
+3. **Schema drift detection.** `add_files` refuses mismatched data-file schemas with a clear
    error, but there is no policy yet for "a new column appeared".
 4. **Object-store sources.** `source.py` handles local paths only; S3 is an interface swap.
 

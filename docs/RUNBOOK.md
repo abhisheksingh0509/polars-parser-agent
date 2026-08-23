@@ -146,7 +146,7 @@ uv run ffe run    feeds/msci-test.yaml --table sandbox.msci_test --workspace ./_
 uv run ffe tables --workspace ./_x
 ```
 
-`--workspace` holds staging, the job ledger, and the warehouse; `./_x` is
+`--workspace` holds the warehouse (data files and metadata) and the job ledger; `./_x` is
 gitignored. Expect:
 
 ```
@@ -155,7 +155,7 @@ commit.snapshot_id: <not null>
 ```
 
 `files: 3` with **one** `snapshot_id` is the whole design in one line: three
-workers staged three Parquet files in parallel, and a single writer registered
+workers wrote three Parquet data files in parallel, and a single writer registered
 them as one atomic snapshot. More than one snapshot means something committed
 twice.
 
@@ -192,7 +192,7 @@ uv run ffe explain feeds/msci-test.yaml     # recent_jobs now has this job_id
 ```
 
 Check `rows` equals the trailer total from step 4 (12 for `msci-test`), and that
-the column list carries the five lineage columns added at staging time:
+the column list carries the five lineage columns added at write time:
 
 | Column | Is |
 |---|---|
@@ -280,7 +280,7 @@ Two consequences worth internalising:
   a member's filename is reading the wrong thing — a real member may not carry a
   date at all, and if it does it is redundant.
 - **A glob that matches several zips is a multi-day job**, and that is fine —
-  it is how a backfill works. What must stay true is that each *staged file*
+  it is how a backfill works. What must stay true is that each *data file*
   carries a single date, which the assumption gives you for free.
 
 ## Supplying the business date
@@ -366,8 +366,8 @@ the day it belongs to, not the day you ran it.
 
 This is cheap here because of the feed's shape. `add_files` refuses a Parquet
 file spanning two partition values, so normally partitioning means splitting
-frames before staging. But staging already writes **one file per member**, and
-one archive is one business day, so every staged file holds exactly one date
+frames before writing. But the write already emits **one file per member**, and
+one archive is one business day, so every data file holds exactly one date
 already. No split, no rewrite: `add_files` still just reads the footers.
 
 The invariant that actually matters is **per file**, not per archive. An archive

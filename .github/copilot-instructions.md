@@ -1,7 +1,7 @@
 # Working in this repo
 
 This repo lands flat-file feeds in Iceberg. Engineers write only the parse logic;
-the framework owns zip handling, parallelism, staging, the Iceberg commit,
+the framework owns zip handling, parallelism, data files, the Iceberg commit,
 rejects, and lineage.
 
 **Never write ingestion code.** If you find yourself opening a zip, writing
@@ -176,6 +176,14 @@ one is a real constraint if the project is ever rebuilt elsewhere (see
   reason — do not turn it into a closure or a lambda.
 - Console output is ASCII-escaped JSON on purpose, so a cp1252 console can't
   crash on a non-ASCII value.
+- **Nothing under a table's `data/` is scratch.** `add_files` registers Parquet
+  in place and never rewrites a row, so the file a worker writes *is* the file
+  the table reads. Deleting one removes rows while the metadata still points at
+  it. The invariant: every file there is either registered in a snapshot or
+  being written right now — a job that fails a gate discards its own files
+  (`datafiles.discard`), which is why there is no third category and no
+  orphan-cleanup verb. This directory was once called `staging` and documented
+  as "safe to delete"; the name is what produced the instruction.
 
 ## When a production file fails after the sample passed
 

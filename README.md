@@ -1,7 +1,7 @@
 # Flatfile Ingestion Engine (`ffe`)
 
 Lands bespoke flat-file feeds in Iceberg. **You write the parse function; the
-framework owns the plumbing** — zip handling, parallelism, staging, the Iceberg
+framework owns the plumbing** — zip handling, parallelism, data files, the Iceberg
 commit, rejects, and lineage.
 
 Onboarding a new feed is **one YAML file**, plus a parser class only when the
@@ -171,7 +171,7 @@ example of the extension path.
 | Path | What |
 |---|---|
 | `src/ffe/core/` | parsers. Pure functions, **no I/O** — which is why `dry-run` cannot write |
-| `src/ffe/io/` | source resolution, fan-out, staging, ledger, Iceberg sink |
+| `src/ffe/io/` | source resolution, fan-out, data files, ledger, Iceberg sink |
 | `src/ffe/cli.py` | the eight verbs |
 | `feeds/` | one YAML per feed. Versioned config, reviewed like code |
 | `plugins/` | your parser code |
@@ -181,10 +181,14 @@ example of the extension path.
 ## How parallelism works
 
 1. List the archive's members — nothing read yet.
-2. N workers, each parsing its own member onto its own staged Parquet file.
-   **No worker touches Iceberg.**
-3. One single-threaded `add_files` commit registers every staged file in a single
-   snapshot. No data is rewritten; Iceberg reads the Parquet footers for stats.
+2. N workers, each parsing its own member into its own Parquet data file under
+   the target table's `data/`. **No worker touches Iceberg.**
+3. One single-threaded `add_files` commit registers those files in a single
+   snapshot. No data is rewritten; Iceberg reads the Parquet footers for stats —
+   so a worker's output *is* the table's data, not a temporary copy of it.
+
+Same thing without the jargon, step by step, is in
+[`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md#what-actually-happens-when-you-run-it).
 
 Default executor is `thread`. Measured on an M-series Mac: parsing runs at ~5M
 rows/s single-threaded, so at small volumes a process pool costs more to start
