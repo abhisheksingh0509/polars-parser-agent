@@ -7,7 +7,7 @@ import pytest
 from ffe.core.engine import parse
 from ffe.core.plugins import load_dir
 from ffe.core.report import ParseError
-from ffe.core.spec import Coerce, NativeParser, PluginParser
+from ffe.core.spec import Coerce, FeedSpec, NativeParser, PluginParser
 
 ROOT = Path(__file__).parent.parent
 FIX = Path(__file__).parent / "fixtures"
@@ -88,3 +88,20 @@ def test_plugin_bad_option_is_blamed_on_the_spec():
         )
     assert caught.value.blame == "spec"
     assert caught.value.field == "parser.options.fields"
+
+
+def test_acme_spec_states_its_shape_rather_than_inheriting_it():
+    """A fixed-width file has no header, so the spec is the only place the shape
+    can be declared -- and the committed spec must declare it, not fall back to
+    the plugin's defaults, or a column rename never shows up in a diff.
+
+    Also the only coverage of feeds/acme-positions.yaml being loadable at all.
+    """
+    load_dir(ROOT / "plugins")
+    spec = FeedSpec.from_yaml(ROOT / "feeds" / "acme-positions.yaml")
+    assert "fields" in spec.parser.options, "the spec must state its own columns"
+
+    r = parse(spec.parser, (FIX / "acme_positions.txt").read_bytes())
+    assert r.frame.columns == ["id", "name", "amount", "_src_line_no"]
+    assert [str(d) for d in r.frame.dtypes] == ["Int64", "String", "Float64", "UInt32"]
+    assert r.frame["amount"].to_list() == [125.0, 340.0]

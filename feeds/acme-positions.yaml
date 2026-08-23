@@ -5,7 +5,17 @@ source:
 parser:
   kind: plugin
   ref: acme-positions
-  options: {}
+  options:
+    data_tag: "D"
+    trailer_tag: "TRL"
+    amount_scale: 100
+    # name, start, end, type. A fixed-width file carries no header, so this is
+    # the only place the shape can be stated -- keep it here rather than
+    # inheriting the plugin's defaults, so renaming a column shows in the diff.
+    fields:
+      - [id,     1,  4,  int]
+      - [name,   4,  24, str]
+      - [amount, 24, 34, amount]
 target:
   table: bronze.acme_positions
 policy:
