@@ -571,7 +571,7 @@ polars-parser-agent/
 ├── feeds/                      # FeedSpec YAML -- versioned config
 │   ├── banner-ddl-feed.yaml    # worked example A
 │   ├── pipe-tagged-feed.yaml   # worked example B
-│   └── acme-positions.yaml     # the plugin example
+│   └── msci-test.yaml          # the runbook's worked example
 ├── plugins/
 │   └── acme_positions.py       # fixed-width; the reference plugin
 └── tests/
